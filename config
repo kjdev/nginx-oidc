@@ -1,0 +1,34 @@
+ngx_addon_name=ngx_http_oidc_module
+
+ngx_module_type=HTTP
+ngx_module_name="ngx_http_oidc_module"
+ngx_module_deps=
+ngx_module_incs="$ngx_addon_dir/src"
+ngx_module_srcs="\
+  $ngx_addon_dir/src/ngx_http_oidc_module.c \
+  $ngx_addon_dir/src/ngx_oidc_handler_authenticate.c \
+  $ngx_addon_dir/src/ngx_oidc_handler_callback.c \
+  $ngx_addon_dir/src/ngx_oidc_handler_logout.c \
+  $ngx_addon_dir/src/ngx_oidc_handler_status.c \
+  $ngx_addon_dir/src/ngx_oidc_hash.c \
+  $ngx_addon_dir/src/ngx_oidc_http.c \
+  $ngx_addon_dir/src/ngx_oidc_json.c \
+  $ngx_addon_dir/src/ngx_oidc_jwks.c \
+  $ngx_addon_dir/src/ngx_oidc_jwt.c \
+  $ngx_addon_dir/src/ngx_oidc_metadata.c \
+  $ngx_addon_dir/src/ngx_oidc_provider.c \
+  $ngx_addon_dir/src/ngx_oidc_random.c \
+  $ngx_addon_dir/src/ngx_oidc_session.c \
+  $ngx_addon_dir/src/ngx_oidc_session_store.c \
+  $ngx_addon_dir/src/ngx_oidc_session_store_memory.c \
+  $ngx_addon_dir/src/ngx_oidc_session_store_redis.c \
+  $ngx_addon_dir/src/ngx_oidc_url.c \
+  $ngx_addon_dir/src/ngx_oidc_variable.c \
+"
+ngx_module_libs="\
+  -lcrypto \
+  -lhiredis \
+  -ljansson \
+"
+
+. auto/module
