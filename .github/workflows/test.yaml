@@ -1,0 +1,107 @@
+name: test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  test:
+    permissions:
+      contents: read
+      packages: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up step
+        run: |
+          sudo apt-get update
+          sudo apt-get upgrade -y --no-install-recommends
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            ca-certificates \
+            cpanminus \
+            curl \
+            libhiredis-dev \
+            libjansson-dev \
+            libnginx-mod-http-lua \
+            luarocks \
+            nginx \
+            nginx-dev \
+            redis
+          sudo luarocks install lua-resty-http
+          sudo luarocks install lua-resty-string
+          sudo cpanm -n Test::Nginx
+        env:
+          DEBIAN_FRONTEND: noninteractive
+          PERL_MM_OPT: ''
+          PERL_MM_USE_DEFAULT: 1
+          PERL5LIB: ''
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          set-safe-directory: ${{ github.workspace }}
+          token: ${{ github.token }}
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Build
+        run: |
+          # Download Nginx
+          nginx_version="$(nginx -v 2>&1 | sed -e 's/^[^0-9]*//' -e 's/ .*$//')"
+          curl -sL -o "nginx-${nginx_version}.tar.gz" "https://nginx.org/download/nginx-${nginx_version}.tar.gz"
+          tar xf "nginx-${nginx_version}.tar.gz"
+          cd "nginx-${nginx_version}"
+          # Configure option
+          opt=$(nginx -V 2>&1 | tail -1 | sed -e 's/configure arguments://' -e 's| --add-dynamic-module=[^ ]*||g')
+          with_cc_opt=$(echo "${opt}" | grep -e "--with-cc-opt='[^']*'" -o | sed -e "s/^--with-cc-opt='//" -e "s/'$//")
+          with_ld_opt=$(echo "${opt}" | grep -e "--with-ld-opt='[^']*'" -o | sed -e "s/^--with-ld-opt='//" -e "s/'$//")
+          opt=$(echo "${opt}" | sed -e "s|--with-cc-opt='[^']*'||" -e "s|--with-ld-opt='[^']*'||" -e 's/--without-engine//')
+          # Run build
+          # shellcheck disable=SC2086
+          ./configure \
+            ${opt} \
+            --with-cc-opt="${with_cc_opt} -DNGX_HTTP_HEADERS" \
+            --with-ld-opt="${with_ld_opt}" \
+            --add-dynamic-module=..
+          make
+          # Copy module
+          sudo mkdir -p /usr/share/nginx/modules
+          sudo cp objs/ngx_http_oidc_module.so /usr/share/nginx/modules/
+      - name: Test
+        run: |
+          # Run IdP stub
+          docker run \
+            --rm --detach \
+            --name oidc-stub \
+            -p 8888:8888 \
+            -e OIDC_CLIENT_ID="test" \
+            -e OIDC_CLIENT_SECRET="b028e7a42bbb072acf09ed342e760627" \
+            -e OIDC_REDIRECT_URI="http://127.0.0.1:1984/oidc_callback" \
+            ghcr.io/kjdev/oidc-provider-stub &>/dev/null
+          # Run Redis
+          redis-server --daemonize yes
+          # Run test
+          export TEST_NGINX_CONF_DIR="${PWD}/t/conf"
+          prove -r t
+        env:
+          TEST_NGINX_LOAD_MODULES: /usr/share/nginx/modules/ngx_http_oidc_module.so /usr/share/nginx/modules/ndk_http_module.so /usr/share/nginx/modules/ngx_http_lua_module.so
+          TEST_NGINX_LUA_DIR: /usr/share/lua/5.1/
+          TEST_NGINX_PORT: 1984
+          TEST_NGINX_SERVROOT: /tmp/servroot
+    timeout-minutes: 30
