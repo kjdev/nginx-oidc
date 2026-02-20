@@ -59,7 +59,7 @@ jobs:
           platforms: linux/${{ matrix.arch }}
           provenance: false
           push: true
-          tags: ghcr.io/${{ env.container }}:google
+          tags: ghcr.io/${{ env.container }}:google-${{ matrix.arch }}
           target: google
     timeout-minutes: 30
     strategy:
