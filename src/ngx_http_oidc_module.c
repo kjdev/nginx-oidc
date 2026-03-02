@@ -217,7 +217,7 @@ static ngx_command_t ngx_http_oidc_commands[] = {
       offsetof(ngx_http_oidc_provider_t, extra_auth_args), NULL },
     { ngx_string("scopes"), NGX_HTTP_MAIN_CONF | NGX_CONF_1MORE,
       ngx_http_oidc_scopes, 0, 0, NULL },
-    { ngx_string("enable_pkce"), NGX_HTTP_MAIN_CONF | NGX_CONF_FLAG,
+    { ngx_string("pkce"), NGX_HTTP_MAIN_CONF | NGX_CONF_FLAG,
       ngx_conf_set_flag_slot, 0,
       ngx_offsetof_nested(ngx_http_oidc_provider_t, pkce, enable), NULL },
     { ngx_string("code_challenge_method"), NGX_HTTP_MAIN_CONF | NGX_CONF_TAKE1,
