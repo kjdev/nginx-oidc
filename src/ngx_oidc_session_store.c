@@ -84,75 +84,22 @@ static ngx_oidc_session_store_t *
 store_get_default(ngx_http_request_t *r)
 {
     ngx_http_oidc_main_conf_t *omcf;
-    ngx_oidc_session_store_t *default_store;
 
     omcf = ngx_http_get_module_main_conf(r, ngx_http_oidc_module);
-    if (omcf == NULL || omcf->session_stores == NULL) {
+    if (omcf == NULL) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                      "oidc_session_store: main configuration "
-                      "or session stores array is NULL");
+                      "oidc_session_store: main configuration is NULL");
         return NULL;
     }
 
-    /* Create default memory store if no session stores are configured */
-    if (omcf->session_stores->nelts == 0) {
-        default_store = ngx_array_push(omcf->session_stores);
-        if (default_store == NULL) {
-            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                          "oidc_session_store: failed to allocate memory "
-                          "for default session store");
-            return NULL;
-        }
-
-        ngx_memzero(default_store, sizeof(ngx_oidc_session_store_t));
-        ngx_str_set(&default_store->name, "default_memory");
-        default_store->type = NGX_OIDC_SESSION_STORE_MEMORY;
-        default_store->ttl = 3600; /* 1 hour default */
-        ngx_str_set(&default_store->prefix, "oidc_session_store:");
-
-        /* Memory store defaults */
-        default_store->memory.size = 10 * 1024 * 1024; /* 10MB */
-        default_store->memory.max_size = 1000;
-
-        /* Set operations table */
-        default_store->ops = &memory_ops;
-
-        /* Verify shared memory zone is available for memory store */
-        if (omcf->shm_zone == NULL) {
-            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                          "oidc_session_store: shared memory zone "
-                          "not available for default memory store");
-            return NULL;
-        }
-
-        if (omcf->shm_zone->data == NULL) {
-            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                          "oidc_session_store: shared memory zone "
-                          "not initialized for default memory store");
-            return NULL;
-        }
-
-        /* Set shared memory zone reference for memory store */
-        default_store->memory.shm_zone = omcf->shm_zone;
-
-        /* Initialize the default session store */
-        if (store_init(default_store, omcf->session_stores->pool,
-                       r->connection->log)
-            != NGX_OK)
-        {
-            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                          "oidc_session_store: failed to initialize default "
-                          "memory session store");
-            return NULL;
-        }
-
-        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                       "oidc_session_store: created default memory session "
-                       "store");
+    if (omcf->default_session_store == NULL) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                      "oidc_session_store: default session store "
+                      "is not configured");
+        return NULL;
     }
 
-    /* Return first store as default */
-    return (ngx_oidc_session_store_t *) omcf->session_stores->elts;
+    return omcf->default_session_store;
 }
 
 ngx_int_t
@@ -267,55 +214,52 @@ ngx_oidc_session_store_cleanup_expired(ngx_http_request_t *r,
     return store->ops->expire(r, store);
 }
 
-ngx_int_t
-ngx_oidc_session_store_ensure_default(ngx_array_t *session_stores,
-    ngx_pool_t *pool, ngx_log_t *log, ngx_shm_zone_t *shm_zone)
+ngx_oidc_session_store_t *
+ngx_oidc_session_store_ensure_default(ngx_pool_t *pool, ngx_log_t *log,
+    ngx_shm_zone_t *shm_zone)
 {
     ngx_oidc_session_store_t *default_store;
 
-    if (session_stores == NULL || pool == NULL || log == NULL) {
-        return NGX_ERROR;
+    if (pool == NULL || log == NULL) {
+        return NULL;
     }
 
-    /* Create default memory session store for backward compatibility */
-    if (session_stores->nelts == 0) {
-        default_store = ngx_array_push(session_stores);
-        if (default_store == NULL) {
-            ngx_log_error(NGX_LOG_ERR, log, 0,
-                          "oidc_session_store: failed to allocate memory "
-                          "for default session store");
-            return NGX_ERROR;
-        }
-
-        ngx_memzero(default_store, sizeof(ngx_oidc_session_store_t));
-        ngx_str_set(&default_store->name, "default_memory");
-        default_store->type = NGX_OIDC_SESSION_STORE_MEMORY;
-        default_store->ttl = 3600; /* 1 hour default */
-        ngx_str_set(&default_store->prefix, "oidc_session_store:");
-
-        /* Memory store defaults */
-        default_store->memory.size = 10 * 1024 * 1024; /* 10MB */
-        default_store->memory.max_size = 1000;
-
-        /* Set shared memory zone reference for memory store */
-        if (shm_zone != NULL) {
-            default_store->memory.shm_zone = shm_zone;
-        }
-
-        /* Initialize session store operations */
-        if (store_init(default_store, pool, log) != NGX_OK) {
-            ngx_log_error(NGX_LOG_ERR, log, 0,
-                          "oidc_session_store: failed to initialize "
-                          "default memory session store");
-            return NGX_ERROR;
-        }
-
-        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, log, 0,
-                       "oidc_session_store: created default memory "
-                       "session store");
+    /* Create default memory session store */
+    default_store = ngx_pcalloc(pool, sizeof(ngx_oidc_session_store_t));
+    if (default_store == NULL) {
+        ngx_log_error(NGX_LOG_ERR, log, 0,
+                      "oidc_session_store: failed to allocate memory "
+                      "for default session store");
+        return NULL;
     }
 
-    return NGX_OK;
+    ngx_str_set(&default_store->name, "default_memory");
+    default_store->type = NGX_OIDC_SESSION_STORE_MEMORY;
+    default_store->ttl = 3600; /* 1 hour default */
+    ngx_str_set(&default_store->prefix, "oidc_session_store:");
+
+    /* Memory store defaults */
+    default_store->memory.size = 10 * 1024 * 1024; /* 10MB */
+    default_store->memory.max_size = 1000;
+
+    /* Set shared memory zone reference for memory store */
+    if (shm_zone != NULL) {
+        default_store->memory.shm_zone = shm_zone;
+    }
+
+    /* Initialize session store operations */
+    if (store_init(default_store, pool, log) != NGX_OK) {
+        ngx_log_error(NGX_LOG_ERR, log, 0,
+                      "oidc_session_store: failed to initialize "
+                      "default memory session store");
+        return NULL;
+    }
+
+    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, log, 0,
+                   "oidc_session_store: created default memory "
+                   "session store");
+
+    return default_store;
 }
 
 /* Initialize all session stores through abstraction layer */

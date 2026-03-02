@@ -144,16 +144,15 @@ ngx_int_t ngx_oidc_session_store_init_all(ngx_array_t *session_stores,
 /**
  * Ensure default session store exists
  *
- * Creates a default memory-based session store if none is configured.
+ * Creates a default memory-based session store.
  *
- * @param[in] session_stores  Array of session store configurations
  * @param[in] pool            Memory pool for allocation
  * @param[in] log             Log context
  * @param[in] shm_zone        Shared memory zone for memory store
  *
- * @return NGX_OK on success, NGX_ERROR on failure
+ * @return Pointer to created session store, or NULL on failure
  */
-ngx_int_t ngx_oidc_session_store_ensure_default(ngx_array_t *session_stores,
+ngx_oidc_session_store_t *ngx_oidc_session_store_ensure_default(
     ngx_pool_t *pool, ngx_log_t *log, ngx_shm_zone_t *shm_zone);
 
 #endif /* _NGX_OIDC_SESSION_STORE_H_INCLUDED_ */

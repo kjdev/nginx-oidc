@@ -1659,7 +1659,6 @@ ngx_http_oidc_init_main_conf(ngx_conf_t *cf, void *conf)
     ngx_http_oidc_main_conf_t *omcf = conf;
     ngx_http_oidc_provider_t *provider;
     ngx_oidc_session_store_t *store;
-    ngx_oidc_session_store_t *default_store;
     ngx_uint_t i;
 
     /* Initialize all session stores through abstraction layer */
@@ -1672,13 +1671,16 @@ ngx_http_oidc_init_main_conf(ngx_conf_t *cf, void *conf)
         return NGX_CONF_ERROR;
     }
 
-    /* Create default memory session store for backward compatibility */
-    if (ngx_oidc_session_store_ensure_default(omcf->session_stores, cf->pool,
-                                              cf->log, omcf->shm_zone)
-        != NGX_OK)
-    {
+    /* Create default memory session store
+     * Always created: used as fallback for providers without explicit
+     * session_store and for periodic cleanup via store_get_default() */
+    omcf->default_session_store =
+        ngx_oidc_session_store_ensure_default(cf->pool, cf->log,
+                                              omcf->shm_zone);
+    if (omcf->default_session_store == NULL) {
         ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
-                           "failed to create default memory session store");
+                           "failed to create default memory "
+                           "session store");
         return NGX_CONF_ERROR;
     }
 
@@ -1697,8 +1699,6 @@ ngx_http_oidc_init_main_conf(ngx_conf_t *cf, void *conf)
     /* Initialize PKCE defaults and session stores for all providers */
     if (omcf->providers) {
         provider = omcf->providers->elts;
-        /* Use first store as default */
-        default_store = omcf->session_stores->elts;
 
         for (i = 0; i < omcf->providers->nelts; i++) {
             /* Set PKCE default if not explicitly configured
@@ -1714,10 +1714,8 @@ ngx_http_oidc_init_main_conf(ngx_conf_t *cf, void *conf)
             ngx_conf_init_value(provider[i].fetch_userinfo, 0);
 
             /* Set default session store if not explicitly configured */
-            if (provider[i].session_store == NULL
-                && omcf->session_stores->nelts > 0)
-            {
-                provider[i].session_store = default_store;
+            if (provider[i].session_store == NULL) {
+                provider[i].session_store = omcf->default_session_store;
             }
 
             /* Set default session_timeout if not explicitly configured

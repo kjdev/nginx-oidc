@@ -88,13 +88,15 @@ typedef struct {
 /** OIDC module main configuration (http block level) */
 typedef struct {
     /** provider list (ngx_http_oidc_provider_t) */
-    ngx_array_t    *providers;
+    ngx_array_t              *providers;
     /** metadata list (ngx_oidc_metadata_t) */
-    ngx_array_t    *provider_metadata;
+    ngx_array_t              *provider_metadata;
     /** shared memory zone for nonce/state */
-    ngx_shm_zone_t *shm_zone;
+    ngx_shm_zone_t           *shm_zone;
     /** session store list (ngx_oidc_session_store_t) */
-    ngx_array_t    *session_stores;
+    ngx_array_t              *session_stores;
+    /** auto-created default session store */
+    ngx_oidc_session_store_t *default_session_store;
 } ngx_http_oidc_main_conf_t;
 
 typedef struct {
