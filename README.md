@@ -487,10 +487,10 @@ Defines an OIDC provider. A provider contains the configuration for the OpenID C
 
 **PKCE Settings**:
 
-##### enable_pkce
+##### pkce
 
 - **Description**: Enable PKCE (Proof Key for Code Exchange)
-- **Syntax**: `enable_pkce on | off;`
+- **Syntax**: `pkce on | off;`
 - **Default**: `on`
 - **Valid values**: `on`, `off`
 - **Required**: No
@@ -574,7 +574,7 @@ oidc_provider corporate_idp {
     clock_skew 300;
 
     # PKCE settings
-    enable_pkce on;
+    pkce on;
     code_challenge_method S256;
 
     # Session settings
@@ -1195,7 +1195,7 @@ Implement the following security measures when using the OIDC module in producti
 ```nginx
 oidc_provider my_provider {
     # ...
-    enable_pkce on;                # Enable PKCE (default: on)
+    pkce on;                # Enable PKCE (default: on)
     code_challenge_method S256;    # Use S256 (default: S256)
 }
 ```

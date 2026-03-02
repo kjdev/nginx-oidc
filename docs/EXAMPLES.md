@@ -273,7 +273,7 @@ http {
         redirect_uri "https://app.example.com/oauth2/callback";
 
         # Security settings
-        enable_pkce on;
+        pkce on;
         code_challenge_method S256;
 
         # Enable UserInfo retrieval
