@@ -134,7 +134,7 @@ metadata_rbtree_insert(ngx_rbtree_node_t *temp, ngx_rbtree_node_t *node,
 /** Context for rbtree traversal */
 typedef struct {
     ngx_oidc_metadata_iterate_pt  callback;
-    void *data;
+    void                         *data;
     ngx_int_t                     result;
 } metadata_traverse_ctx_t;
 

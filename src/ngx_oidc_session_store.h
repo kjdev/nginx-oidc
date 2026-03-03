@@ -36,12 +36,12 @@ typedef struct {
 
 /** Session store instance */
 struct ngx_oidc_session_store_s {
-    ngx_str_t  name;
-    ngx_oidc_session_store_type_t type;
-    ngx_oidc_session_store_ops_t *ops;
+    ngx_str_t                      name;
+    ngx_oidc_session_store_type_t  type;
+    ngx_oidc_session_store_ops_t  *ops;
     /** default TTL (seconds) */
-    time_t     ttl;
-    ngx_str_t  prefix;
+    time_t                         ttl;
+    ngx_str_t                      prefix;
     /** memory store settings */
     struct {
         size_t          size;
