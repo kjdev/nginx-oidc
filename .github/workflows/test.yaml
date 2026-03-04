@@ -40,10 +40,16 @@ jobs:
             nginx \
             nginx-dev \
             redis
+          if [ ! "${nginx_version}" = "ubuntu" ]; then
+            sudo apt-get install -y --no-install-recommends \
+              libluajit2-5.1-dev
+          fi
           sudo luarocks install lua-resty-http
           sudo luarocks install lua-resty-string
+          sudo luarocks install lua-resty-openssl
           sudo cpanm -n Test::Nginx
         env:
+          nginx_version: ${{ matrix.nginx }}
           DEBIAN_FRONTEND: noninteractive
           PERL_MM_OPT: ''
           PERL_MM_USE_DEFAULT: 1
@@ -60,7 +66,8 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
-      - name: Build
+      - if: ${{ matrix.nginx == 'ubuntu' }}
+        name: Build with Ubuntu
         run: |
           # Download Nginx
           nginx_version="$(nginx -v 2>&1 | sed -e 's/^[^0-9]*//' -e 's/ .*$//')"
@@ -83,8 +90,48 @@ jobs:
           # Copy module
           sudo mkdir -p /usr/share/nginx/modules
           sudo cp objs/ngx_http_oidc_module.so /usr/share/nginx/modules/
+          sudo ln -sfn /usr/sbin/nginx /usr/local/sbin/nginx
+      - if: ${{ matrix.nginx != 'ubuntu' }}
+        name: Build with sources
+        run: |
+          # Download Lua module: 0.10.26
+          curl -sL -o nginx-mod-lua.tar.gz https://github.com/openresty/lua-nginx-module/archive/refs/tags/v0.10.26.tar.gz
+          tar xf nginx-mod-lua.tar.gz
+          # Download NDK module
+          curl -sL -o nginx-mod-ndk.tar.gz https://github.com/vision5/ngx_devel_kit/archive/refs/tags/v0.3.4.tar.gz
+          tar xf nginx-mod-ndk.tar.gz
+          # Download Nginx
+          curl -sL -o "nginx-${nginx_version}.tar.gz" "https://nginx.org/download/nginx-${nginx_version}.tar.gz"
+          tar xf "nginx-${nginx_version}.tar.gz"
+          cd "nginx-${nginx_version}"
+          # Run build
+          ./configure \
+            --with-compat \
+            --with-debug \
+            --with-http_ssl_module \
+            --with-http_v2_module \
+            --with-pcre \
+            --with-pcre-jit \
+            --add-dynamic-module=../lua-nginx-module-0.10.26 \
+            --add-dynamic-module=../ngx_devel_kit-0.3.4 \
+            --add-dynamic-module=..
+          make -j
+          # Copy module
+          sudo mkdir -p /usr/share/nginx/modules
+          sudo cp objs/ndk_http_module.so /usr/share/nginx/modules/
+          sudo cp objs/ngx_http_lua_module.so /usr/share/nginx/modules/
+          sudo cp objs/ngx_http_oidc_module.so /usr/share/nginx/modules/
+          sudo cp objs/nginx /usr/local/sbin/
+        env:
+          nginx_version: ${{ matrix.nginx }}
+          LUAJIT_INC: /usr/include/luajit-2.1
+          LUAJIT_LIB: /usr/lib/x86_64-linux-gnu
       - name: Test
         run: |
+          # nginx
+          echo "::group::nginx show version"
+          ${TEST_NGINX_BINARY} -V
+          echo "::endgroup::"
           # Run IdP stub
           docker run \
             --rm --detach \
@@ -104,4 +151,10 @@ jobs:
           TEST_NGINX_LUA_DIR: /usr/share/lua/5.1/
           TEST_NGINX_PORT: 1984
           TEST_NGINX_SERVROOT: /tmp/servroot
+          TEST_NGINX_BINARY: /usr/local/sbin/nginx
     timeout-minutes: 30
+    strategy:
+      matrix:
+        nginx:
+          - ubuntu
+          - '1.29.5'
