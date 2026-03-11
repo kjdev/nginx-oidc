@@ -530,9 +530,15 @@ ngx_oidc_http_cookie_get(ngx_http_request_t *r, ngx_str_t *cookie_name,
     }
 
     /* Use nginx built-in parser that handles multiple Cookie headers */
+#if (nginx_version >= 1029006)
+    if (ngx_http_parse_cookie_lines(r, r->headers_in.cookie,
+                                    cookie_name, &value)
+        == NULL)
+#else
     if (ngx_http_parse_multi_header_lines(r, r->headers_in.cookie,
                                           cookie_name, &value)
         == NULL)
+#endif
     {
         ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                        "oidc_http: cookie not found: %V", cookie_name);
