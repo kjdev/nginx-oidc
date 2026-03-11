@@ -19,6 +19,9 @@
 #include <openssl/obj_mac.h>
 #include "ngx_oidc_json.h"
 
+/** Maximum JWT token length (16 KiB) */
+#define NGX_OIDC_MAX_JWT_LENGTH  16384
+
 typedef struct ngx_oidc_jwks_cache_node_s ngx_oidc_jwks_cache_node_t;
 
 /**

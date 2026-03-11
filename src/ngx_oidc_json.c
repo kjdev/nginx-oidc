@@ -165,11 +165,20 @@ ngx_oidc_json_parse(ngx_str_t *json_str, ngx_pool_t *pool)
         return NULL;
     }
 
+    if (json_str->len > NGX_OIDC_MAX_JSON_SIZE) {
+        ngx_log_error(NGX_LOG_ERR, pool->log, 0,
+                      "oidc_json: parse failed, input too large: %uz bytes "
+                      "(limit: %uz)", json_str->len,
+                      (size_t) NGX_OIDC_MAX_JSON_SIZE);
+        return NULL;
+    }
+
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, pool->log, 0,
                    "oidc_json: parsing JSON, length=%uz", json_str->len);
 
     /* Parse JSON using Jansson (binary-safe) */
-    root = json_loadb((const char *) json_str->data, json_str->len, 0, &error);
+    root = json_loadb((const char *) json_str->data, json_str->len,
+                      JSON_REJECT_DUPLICATES, &error);
     if (!root) {
         ngx_log_error(NGX_LOG_ERR, pool->log, 0,
                       "oidc_json: parse failed at line %d: %s "
@@ -250,7 +259,7 @@ ngx_oidc_json_type(ngx_oidc_json_t *json)
     json_t *j = NGX_OIDC_JSON_CAST(json);
 
     if (!j) {
-        return NGX_OIDC_JSON_NULL;
+        return NGX_OIDC_JSON_INVALID;
     }
 
     switch (json_typeof(j)) {
@@ -270,7 +279,7 @@ ngx_oidc_json_type(ngx_oidc_json_t *json)
     case JSON_OBJECT:
         return NGX_OIDC_JSON_OBJECT;
     default:
-        return NGX_OIDC_JSON_NULL;
+        return NGX_OIDC_JSON_INVALID;
     }
 }
 

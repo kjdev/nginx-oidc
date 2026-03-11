@@ -11,6 +11,12 @@
 #include <ngx_http.h>
 #include <openssl/evp.h>
 
+/** Maximum JWKS JSON size (256 KiB) */
+#define NGX_OIDC_MAX_JWKS_SIZE  262144
+
+/** Maximum number of keys in JWKS */
+#define NGX_OIDC_MAX_JWKS_KEYS  64
+
 /* JWK key types */
 typedef enum {
     NGX_OIDC_JWK_UNKNOWN = 0,
@@ -115,6 +121,15 @@ ngx_str_t *ngx_oidc_jwks_key_get_alg(const ngx_oidc_jwks_key_t *key);
  * @return Key type enum value
  */
 ngx_oidc_jwk_type_t ngx_oidc_jwks_key_get_kty(const ngx_oidc_jwks_key_t *key);
+
+/**
+ * Get curve name (crv) from JWKS key
+ *
+ * @param[in] key  JWKS key structure
+ *
+ * @return Pointer to crv string, or NULL if not an EC key
+ */
+ngx_str_t *ngx_oidc_jwks_key_get_crv(const ngx_oidc_jwks_key_t *key);
 
 /**
  * Get JWKS key at specified index from key array

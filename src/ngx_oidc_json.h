@@ -25,14 +25,18 @@ typedef void *ngx_oidc_json_t;
  * Used by ngx_oidc_json_type() to determine value types.
  */
 typedef enum {
-    NGX_OIDC_JSON_NULL,     /* JSON null value */
-    NGX_OIDC_JSON_BOOLEAN,  /* JSON boolean (true/false) */
-    NGX_OIDC_JSON_INTEGER,  /* JSON integer number */
-    NGX_OIDC_JSON_REAL,     /* JSON floating-point number */
-    NGX_OIDC_JSON_STRING,   /* JSON string */
-    NGX_OIDC_JSON_ARRAY,    /* JSON array */
-    NGX_OIDC_JSON_OBJECT    /* JSON object */
+    NGX_OIDC_JSON_INVALID = -1, /* Invalid/NULL input (not a JSON value) */
+    NGX_OIDC_JSON_NULL,         /* JSON null value */
+    NGX_OIDC_JSON_BOOLEAN,      /* JSON boolean (true/false) */
+    NGX_OIDC_JSON_INTEGER,      /* JSON integer number */
+    NGX_OIDC_JSON_REAL,         /* JSON floating-point number */
+    NGX_OIDC_JSON_STRING,       /* JSON string */
+    NGX_OIDC_JSON_ARRAY,        /* JSON array */
+    NGX_OIDC_JSON_OBJECT        /* JSON object */
 } ngx_oidc_json_type_t;
+
+/** Maximum JSON input size (1 MiB) */
+#define NGX_OIDC_MAX_JSON_SIZE  1048576
 
 /**
  * Parse JSON string

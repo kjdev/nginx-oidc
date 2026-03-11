@@ -44,6 +44,7 @@ struct ngx_oidc_jwks_cache_node_s {
 struct ngx_oidc_jwks_key_s {
     ngx_str_t            kid;
     ngx_str_t            alg;
+    ngx_str_t            crv;   /* EC curve name (P-256, P-384, P-521, secp256k1) */
     ngx_oidc_jwk_type_t  kty;
     /** OpenSSL public key */
     EVP_PKEY            *pkey;
@@ -117,6 +118,29 @@ jwks_cache_node_cleanup(void *data)
             keys[i].pkey = NULL;
         }
     }
+}
+
+/*
+ * Helper: check if a JWK has a string field with specific value
+ */
+static ngx_flag_t
+jwks_has_string_value(ngx_oidc_json_t *jwk, const char *key,
+    const char *expected)
+{
+    ngx_oidc_json_t *val;
+    const char *str;
+
+    val = ngx_oidc_json_object_get(jwk, key);
+    if (!ngx_oidc_json_is_string(val)) {
+        return 0;
+    }
+
+    str = ngx_oidc_json_string(val);
+    if (str == NULL) {
+        return 0;
+    }
+
+    return (ngx_strcmp(str, expected) == 0);
 }
 
 /**
@@ -212,6 +236,29 @@ jwks_create_rsa_key(ngx_http_request_t *r, ngx_oidc_json_t *jwk)
     ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                    "oidc_jwks: decoded n_len=%uz, e_len=%uz",
                    n_decoded.len, e_decoded.len);
+
+    /* Validate minimum RSA key length (2048 bits = 256 bytes) */
+    if (n_decoded.len < 256) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                      "oidc_jwks: RSA modulus too short: %uz bytes "
+                      "(minimum 256 bytes / 2048 bits)", n_decoded.len);
+        return NULL;
+    }
+
+    /* Validate RSA public exponent: must be odd and >= 3 */
+    if (e_decoded.len == 0
+        || (e_decoded.data[e_decoded.len - 1] & 1) == 0)
+    {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                      "oidc_jwks: RSA exponent must be an odd integer");
+        return NULL;
+    }
+
+    if (e_decoded.len == 1 && e_decoded.data[0] < 3) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                      "oidc_jwks: RSA exponent too small (minimum value 3)");
+        return NULL;
+    }
 
     /* Convert binary data to BIGNUM */
     n_bn = BN_bin2bn(n_decoded.data, n_decoded.len, NULL);
@@ -444,6 +491,42 @@ jwks_create_ec_key(ngx_http_request_t *r, ngx_oidc_json_t *jwk)
     ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                    "oidc_jwks: decoded x_len=%uz, y_len=%uz", x_decoded.len,
                    y_decoded.len);
+
+    /* Validate coordinate lengths for the curve */
+    {
+        size_t expected_coord_len;
+
+        if ((crv_str.len == 5
+             && ngx_strncmp(crv_str.data, "P-256", 5) == 0)
+            || (crv_str.len == 9
+                && ngx_strncmp(crv_str.data, "secp256k1", 9) == 0))
+        {
+            expected_coord_len = 32;
+        } else if (crv_str.len == 5
+                   && ngx_strncmp(crv_str.data, "P-384", 5) == 0)
+        {
+            expected_coord_len = 48;
+        } else {
+            /* P-521 */
+            expected_coord_len = 66;
+        }
+
+        if (x_decoded.len != expected_coord_len) {
+            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                          "oidc_jwks: invalid 'x' coordinate length "
+                          "for %V: %uz (expected %uz)",
+                          &crv_str, x_decoded.len, expected_coord_len);
+            return NULL;
+        }
+
+        if (y_decoded.len != expected_coord_len) {
+            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                          "oidc_jwks: invalid 'y' coordinate length "
+                          "for %V: %uz (expected %uz)",
+                          &crv_str, y_decoded.len, expected_coord_len);
+            return NULL;
+        }
+    }
 
     /*
      * Create uncompressed EC point format (0x04 || X || Y)
@@ -734,6 +817,15 @@ jwks_parse_json_to_cache(ngx_http_request_t *r, ngx_str_t *jwks_json,
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                    "oidc_jwks: parsing JWKS JSON, length=%uz", jwks_json->len);
 
+    /* Validate JWKS JSON size */
+    if (jwks_json->len > NGX_OIDC_MAX_JWKS_SIZE) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                      "oidc_jwks: JWKS JSON too large: %uz bytes "
+                      "(limit: %uz)", jwks_json->len,
+                      (size_t) NGX_OIDC_MAX_JWKS_SIZE);
+        return NGX_ERROR;
+    }
+
     /* Allocate cache node in request pool */
     node = ngx_pcalloc(r->pool, sizeof(ngx_oidc_jwks_cache_node_t));
     if (node == NULL) {
@@ -762,6 +854,15 @@ jwks_parse_json_to_cache(ngx_http_request_t *r, ngx_str_t *jwks_json,
     }
 
     array_size = ngx_oidc_json_array_size(keys_array);
+
+    if (array_size > NGX_OIDC_MAX_JWKS_KEYS) {
+        ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
+                      "oidc_jwks: JWKS contains %uz keys, "
+                      "limiting to %d", array_size,
+                      NGX_OIDC_MAX_JWKS_KEYS);
+        array_size = NGX_OIDC_MAX_JWKS_KEYS;
+    }
+
     if (array_size == 0) {
         ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
                       "oidc_jwks: JWKS contains no keys");
@@ -814,6 +915,14 @@ jwks_parse_json_to_cache(ngx_http_request_t *r, ngx_str_t *jwks_json,
         {
             ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
                           "oidc_jwks: invalid JWK at index %uz, skipping", i);
+            continue;
+        }
+
+        /* Skip encryption keys (use: "enc") */
+        if (jwks_has_string_value(jwk, "use", "enc")) {
+            ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                           "oidc_jwks: skipping encryption key "
+                           "at index %uz", i);
             continue;
         }
 
@@ -899,6 +1008,20 @@ jwks_parse_json_to_cache(ngx_http_request_t *r, ngx_str_t *jwks_json,
             key->alg = alg_str;
         } else {
             ngx_str_null(&key->alg);
+        }
+
+        /* Get crv for EC keys (used for alg-curve validation) */
+        if (key->kty == NGX_OIDC_JWK_EC) {
+            ngx_str_t crv_str;
+            if (ngx_oidc_json_object_get_string(jwk, "crv", &crv_str, r->pool)
+                == NGX_OK)
+            {
+                key->crv = crv_str;
+            } else {
+                ngx_str_null(&key->crv);
+            }
+        } else {
+            ngx_str_null(&key->crv);
         }
 
         key->pkey = pkey;
@@ -1673,6 +1796,15 @@ ngx_oidc_jwks_key_get_kty(const ngx_oidc_jwks_key_t *key)
         return 0; /* Invalid type */
     }
     return key->kty;
+}
+
+ngx_str_t *
+ngx_oidc_jwks_key_get_crv(const ngx_oidc_jwks_key_t *key)
+{
+    if (key == NULL) {
+        return NULL;
+    }
+    return (ngx_str_t *) &key->crv;
 }
 
 ngx_oidc_jwks_key_t *

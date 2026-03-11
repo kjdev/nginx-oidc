@@ -110,6 +110,13 @@ ngx_oidc_jwt_validate_algorithm(ngx_http_request_t *r, const char *alg)
         return NGX_ERROR;
     }
 
+    /* Explicit rejection of HMAC algorithms */
+    if (alg[0] == 'H' && alg[1] == 'S') {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                      "oidc_jwt: HMAC algorithm '%s' is not allowed", alg);
+        return NGX_ERROR;
+    }
+
     /* Whitelist check */
     for (i = 0; ngx_oidc_jwt_allowed_algs[i] != NULL; i++) {
         if (ngx_strcmp(alg, ngx_oidc_jwt_allowed_algs[i]) == 0) {
@@ -758,6 +765,51 @@ jwt_verify_key_callback(ngx_http_request_t *r, const ngx_oidc_jwks_key_t *key,
                            ctx->algorithm);
             return NGX_OK; /* Continue to next key */
         }
+
+        /* Validate alg-curve compatibility */
+        {
+            ngx_str_t *key_crv = ngx_oidc_jwks_key_get_crv(key);
+
+            if (key_crv == NULL || key_crv->len == 0) {
+                ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                               "oidc_jwt: skipping EC key without crv");
+                return NGX_OK; /* Continue to next key */
+            }
+
+            {
+                ngx_flag_t curve_match = 0;
+
+                if (ngx_strcmp(ctx->algorithm, "ES256") == 0
+                    && key_crv->len == 5
+                    && ngx_strncmp(key_crv->data, "P-256", 5) == 0)
+                {
+                    curve_match = 1;
+                } else if (ngx_strcmp(ctx->algorithm, "ES384") == 0
+                           && key_crv->len == 5
+                           && ngx_strncmp(key_crv->data, "P-384", 5) == 0)
+                {
+                    curve_match = 1;
+                } else if (ngx_strcmp(ctx->algorithm, "ES512") == 0
+                           && key_crv->len == 5
+                           && ngx_strncmp(key_crv->data, "P-521", 5) == 0)
+                {
+                    curve_match = 1;
+                } else if (ngx_strcmp(ctx->algorithm, "ES256K") == 0
+                           && key_crv->len == 9
+                           && ngx_strncmp(key_crv->data, "secp256k1", 9) == 0)
+                {
+                    curve_match = 1;
+                }
+
+                if (!curve_match) {
+                    ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                                   "oidc_jwt: alg-curve mismatch: "
+                                   "alg=%s, crv=%V",
+                                   ctx->algorithm, key_crv);
+                    return NGX_OK; /* Continue to next key */
+                }
+            }
+        }
     } else if (key_kty == NGX_OIDC_JWK_OKP) {
         if (ngx_strcmp(ctx->algorithm, "EdDSA") != 0) {
             ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
@@ -789,6 +841,7 @@ jwt_verify_key_callback(ngx_http_request_t *r, const ngx_oidc_jwks_key_t *key,
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                           "oidc_jwt: Unsupported digest algorithm: %s",
                           ctx->algorithm);
+            result = NGX_ERROR;
             goto cleanup;
         }
 
@@ -796,6 +849,8 @@ jwt_verify_key_callback(ngx_http_request_t *r, const ngx_oidc_jwks_key_t *key,
         if (!mdctx) {
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                           "oidc_jwt: Failed to create EVP_MD_CTX");
+            ERR_clear_error();
+            result = NGX_ERROR;
             goto cleanup;
         }
 
@@ -806,12 +861,13 @@ jwt_verify_key_callback(ngx_http_request_t *r, const ngx_oidc_jwks_key_t *key,
                        verify_init_result);
 
         if (verify_init_result != 1) {
-            unsigned long ssl_err = ERR_get_error();
             char err_buf[256];
-            ERR_error_string_n(ssl_err, err_buf, sizeof(err_buf));
-            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                          "oidc_jwt: EVP_DigestVerifyInit failed: %s",
-                          err_buf);
+            jwt_get_openssl_error(err_buf, sizeof(err_buf));
+            ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                           "oidc_jwt: skipping RSA key, "
+                           "EVP_DigestVerifyInit failed: %s", err_buf);
+            ERR_clear_error();
+            /* result = NGX_OK: continue to next key */
             goto cleanup;
         }
 
@@ -822,6 +878,8 @@ jwt_verify_key_callback(ngx_http_request_t *r, const ngx_oidc_jwks_key_t *key,
             {
                 ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                               "oidc_jwt: Failed to set RSA PSS padding");
+                ERR_clear_error();
+                result = NGX_ERROR;
                 goto cleanup;
             }
             if (EVP_PKEY_CTX_set_rsa_pss_saltlen(pkey_ctx, RSA_PSS_SALTLEN_AUTO)
@@ -829,6 +887,8 @@ jwt_verify_key_callback(ngx_http_request_t *r, const ngx_oidc_jwks_key_t *key,
             {
                 ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                               "oidc_jwt: Failed to set RSA PSS saltlen");
+                ERR_clear_error();
+                result = NGX_ERROR;
                 goto cleanup;
             }
         }
@@ -856,11 +916,12 @@ jwt_verify_key_callback(ngx_http_request_t *r, const ngx_oidc_jwks_key_t *key,
             result = NGX_DONE; /* Found valid signature, stop */
             goto cleanup;
         } else {
-            unsigned long ssl_err = ERR_get_error();
             char err_buf[256];
-            ERR_error_string_n(ssl_err, err_buf, sizeof(err_buf));
-            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                          "oidc_jwt: EVP_DigestVerify failed: %s", err_buf);
+            jwt_get_openssl_error(err_buf, sizeof(err_buf));
+            ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                           "oidc_jwt: RSA signature mismatch: %s", err_buf);
+            ERR_clear_error();
+            /* result = NGX_OK: continue to next key */
             goto cleanup;
         }
     } else if (key_kty == NGX_OIDC_JWK_EC) {
@@ -873,23 +934,26 @@ jwt_verify_key_callback(ngx_http_request_t *r, const ngx_oidc_jwks_key_t *key,
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                           "oidc_jwt: Unsupported ECDSA algorithm: %s",
                           ctx->algorithm);
+            result = NGX_ERROR;
             goto cleanup;
         }
 
         int key_bits = EVP_PKEY_bits(key_pkey);
         if (key_bits <= 0) {
-            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                          "oidc_jwt: Invalid key size from EVP_PKEY_bits: %d",
-                          key_bits);
+            ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                           "oidc_jwt: skipping EC key with invalid "
+                           "key size: %d", key_bits);
+            /* result = NGX_OK: continue to next key */
             goto cleanup;
         }
         int coord_size = (key_bits + 7) / 8;
 
         if (ctx->signature_decoded->len != (size_t) (coord_size * 2)) {
-            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                          "oidc_jwt: Invalid ECDSA signature length: "
-                          "expected %d, got %uz",
-                          coord_size * 2, ctx->signature_decoded->len);
+            ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                           "oidc_jwt: ECDSA signature length mismatch: "
+                           "expected %d, got %uz",
+                           coord_size * 2, ctx->signature_decoded->len);
+            /* result = NGX_OK: continue to next key */
             goto cleanup;
         }
 
@@ -901,6 +965,8 @@ jwt_verify_key_callback(ngx_http_request_t *r, const ngx_oidc_jwks_key_t *key,
         if (!bn_r) {
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                           "oidc_jwt: Failed to create BIGNUM for r");
+            ERR_clear_error();
+            result = NGX_ERROR;
             goto cleanup;
         }
 
@@ -908,6 +974,8 @@ jwt_verify_key_callback(ngx_http_request_t *r, const ngx_oidc_jwks_key_t *key,
         if (!bn_s) {
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                           "oidc_jwt: Failed to create BIGNUM for s");
+            ERR_clear_error();
+            result = NGX_ERROR;
             goto cleanup;
         }
 
@@ -915,6 +983,8 @@ jwt_verify_key_callback(ngx_http_request_t *r, const ngx_oidc_jwks_key_t *key,
         if (!ec_sig) {
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                           "oidc_jwt: Failed to create ECDSA_SIG");
+            ERR_clear_error();
+            result = NGX_ERROR;
             goto cleanup;
         }
 
@@ -922,6 +992,8 @@ jwt_verify_key_callback(ngx_http_request_t *r, const ngx_oidc_jwks_key_t *key,
         if (!ECDSA_SIG_set0(ec_sig, bn_r, bn_s)) {
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                           "oidc_jwt: Failed to set ECDSA_SIG parameters");
+            ERR_clear_error();
+            result = NGX_ERROR;
             goto cleanup;
         }
         /* After successful ECDSA_SIG_set0, bn_r and bn_s are owned by ec_sig */
@@ -932,6 +1004,8 @@ jwt_verify_key_callback(ngx_http_request_t *r, const ngx_oidc_jwks_key_t *key,
         if (der_len <= 0 || !der_sig) {
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                           "oidc_jwt: Failed to convert ECDSA_SIG to DER");
+            ERR_clear_error();
+            result = NGX_ERROR;
             goto cleanup;
         }
 
@@ -939,12 +1013,17 @@ jwt_verify_key_callback(ngx_http_request_t *r, const ngx_oidc_jwks_key_t *key,
         if (!mdctx) {
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                           "oidc_jwt: Failed to create EVP_MD_CTX for ECDSA");
+            ERR_clear_error();
+            result = NGX_ERROR;
             goto cleanup;
         }
 
         if (EVP_DigestVerifyInit(mdctx, NULL, md, NULL, key_pkey) != 1) {
-            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                          "oidc_jwt: EVP_DigestVerifyInit failed for ECDSA");
+            ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                           "oidc_jwt: skipping EC key, "
+                           "EVP_DigestVerifyInit failed for ECDSA");
+            ERR_clear_error();
+            /* result = NGX_OK: continue to next key */
             goto cleanup;
         }
 
@@ -960,12 +1039,12 @@ jwt_verify_key_callback(ngx_http_request_t *r, const ngx_oidc_jwks_key_t *key,
             result = NGX_DONE; /* Found valid signature, stop */
             goto cleanup;
         } else {
-            unsigned long ssl_err = ERR_get_error();
             char err_buf[256];
-            ERR_error_string_n(ssl_err, err_buf, sizeof(err_buf));
-            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                          "oidc_jwt: ECDSA signature verification failed: %s",
-                          err_buf);
+            jwt_get_openssl_error(err_buf, sizeof(err_buf));
+            ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                           "oidc_jwt: ECDSA signature mismatch: %s", err_buf);
+            ERR_clear_error();
+            /* result = NGX_OK: continue to next key */
             goto cleanup;
         }
     } else if (key_kty == NGX_OIDC_JWK_OKP) {
@@ -974,6 +1053,7 @@ jwt_verify_key_callback(ngx_http_request_t *r, const ngx_oidc_jwks_key_t *key,
         if (key_id != EVP_PKEY_ED25519 && key_id != EVP_PKEY_ED448) {
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                           "oidc_jwt: Unsupported OKP key type: %d", key_id);
+            result = NGX_ERROR;
             goto cleanup;
         }
 
@@ -981,13 +1061,18 @@ jwt_verify_key_callback(ngx_http_request_t *r, const ngx_oidc_jwks_key_t *key,
         if (!mdctx) {
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                           "oidc_jwt: Failed to create EVP_MD_CTX for EdDSA");
+            ERR_clear_error();
+            result = NGX_ERROR;
             goto cleanup;
         }
 
         /* EdDSA uses NULL as the digest */
         if (EVP_DigestVerifyInit(mdctx, NULL, NULL, NULL, key_pkey) != 1) {
-            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                          "oidc_jwt: EVP_DigestVerifyInit failed for EdDSA");
+            ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                           "oidc_jwt: skipping OKP key, "
+                           "EVP_DigestVerifyInit failed for EdDSA");
+            ERR_clear_error();
+            /* result = NGX_OK: continue to next key */
             goto cleanup;
         }
 
@@ -1004,12 +1089,12 @@ jwt_verify_key_callback(ngx_http_request_t *r, const ngx_oidc_jwks_key_t *key,
             result = NGX_DONE; /* Found valid signature, stop */
             goto cleanup;
         } else {
-            unsigned long ssl_err = ERR_get_error();
             char err_buf[256];
-            ERR_error_string_n(ssl_err, err_buf, sizeof(err_buf));
-            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                          "oidc_jwt: EdDSA signature verification failed: %s",
-                          err_buf);
+            jwt_get_openssl_error(err_buf, sizeof(err_buf));
+            ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                           "oidc_jwt: EdDSA signature mismatch: %s", err_buf);
+            ERR_clear_error();
+            /* result = NGX_OK: continue to next key */
             goto cleanup;
         }
     }
@@ -1074,11 +1159,20 @@ jwt_verify_signature(ngx_http_request_t *r, ngx_str_t *token,
         return NGX_ERROR;
     }
 
+    /* Enforce token length limit */
+    if (token->len > NGX_OIDC_MAX_JWT_LENGTH) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                      "oidc_jwt: token too large: %uz", token->len);
+        return NGX_ERROR;
+    }
+
+    ERR_clear_error();
+
     /* Parse JWT structure: header.payload.signature */
     dot1 = ngx_strlchr(token->data, token->data + token->len, '.');
-    if (!dot1) {
+    if (!dot1 || dot1 == token->data) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                      "oidc_jwt: Invalid JWT format (missing first dot)");
+                      "oidc_jwt: Invalid JWT format (missing or empty header)");
         return NGX_ERROR;
     }
 
@@ -1086,6 +1180,13 @@ jwt_verify_signature(ngx_http_request_t *r, ngx_str_t *token,
     if (!dot2) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_jwt: Invalid JWT format (missing second dot)");
+        return NGX_ERROR;
+    }
+
+    /* Reject extra segments (JWE) */
+    if (ngx_strlchr(dot2 + 1, token->data + token->len, '.') != NULL) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                      "oidc_jwt: JWT has more than 3 segments");
         return NGX_ERROR;
     }
 
@@ -1203,11 +1304,15 @@ jwt_verify_signature(ngx_http_request_t *r, ngx_str_t *token,
     rc = ngx_oidc_jwks_iterate_keys(r, jwks, jwt_verify_key_callback,
                                     &verify_ctx);
 
-    if (rc != NGX_OK) {
-        ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                       "oidc_jwt: key iteration returned %d", rc);
-    }
     ngx_oidc_json_free(header_json);
+
+    /* Internal error during iteration: propagate immediately */
+    if (rc == NGX_ERROR) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                      "oidc_jwt: JWT signature verification aborted "
+                      "due to internal error");
+        return NGX_ERROR;
+    }
 
     if (verify_ctx.result != NGX_OK) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
@@ -1236,6 +1341,13 @@ ngx_oidc_jwt_decode_payload(ngx_str_t *token, ngx_str_t *payload,
         return NGX_ERROR;
     }
 
+    /* Enforce token length limit */
+    if (token->len > NGX_OIDC_MAX_JWT_LENGTH) {
+        ngx_log_error(NGX_LOG_ERR, pool->log, 0,
+                      "oidc_jwt: token too large: %uz", token->len);
+        return NGX_ERROR;
+    }
+
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, pool->log, 0,
                    "oidc_jwt: decoding payload, token_len=%uz", token->len);
 
@@ -1247,6 +1359,14 @@ ngx_oidc_jwt_decode_payload(ngx_str_t *token, ngx_str_t *payload,
                       "oidc_jwt: invalid JWT format, first dot not found");
         return NGX_ERROR;
     }
+
+    /* Reject empty header segment (e.g. ".payload.sig") */
+    if (start == token->data) {
+        ngx_log_error(NGX_LOG_ERR, pool->log, 0,
+                      "oidc_jwt: invalid JWT format, empty header segment");
+        return NGX_ERROR;
+    }
+
     start++; /* Skip the dot */
 
     /* Find the second dot */
@@ -1257,9 +1377,24 @@ ngx_oidc_jwt_decode_payload(ngx_str_t *token, ngx_str_t *payload,
         return NGX_ERROR;
     }
 
+    /* Reject extra segments (e.g. JWE 5-segment tokens) */
+    if (ngx_strlchr(end + 1, token->data + token->len, '.') != NULL) {
+        ngx_log_error(NGX_LOG_ERR, pool->log, 0,
+                      "oidc_jwt: JWT has more than 3 segments "
+                      "(JWE tokens are not supported)");
+        return NGX_ERROR;
+    }
+
     /* Extract payload part */
     base64_payload.data = start;
     base64_payload.len = end - start;
+
+    /* Reject empty payload segment (e.g. "header..sig") */
+    if (base64_payload.len == 0) {
+        ngx_log_error(NGX_LOG_ERR, pool->log, 0,
+                      "oidc_jwt: invalid JWT format, empty payload segment");
+        return NGX_ERROR;
+    }
 
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, pool->log, 0,
                    "oidc_jwt: payload base64_len=%uz", base64_payload.len);
@@ -1278,6 +1413,7 @@ ngx_oidc_jwt_decode_payload(ngx_str_t *token, ngx_str_t *payload,
     if (ngx_decode_base64url(payload, &base64_payload) != NGX_OK) {
         ngx_log_error(NGX_LOG_ERR, pool->log, 0,
                       "oidc_jwt: base64url decode failed for payload");
+        ngx_memzero(decoded, decoded_len + 1);
         return NGX_ERROR;
     }
 
@@ -1489,8 +1625,12 @@ ngx_oidc_jwt_verify(ngx_http_request_t *r, ngx_str_t *token,
     if (jwt_parse_claims((char *) payload.data, &claims, r->pool) != NGX_OK) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_jwt: Failed to parse JWT claims");
+        ngx_memzero(payload.data, payload.len + 1);
         return NGX_ERROR;
     }
+
+    /* Clear decoded payload to minimize sensitive data residency */
+    ngx_memzero(payload.data, payload.len + 1);
 
     /* Validate claims */
     result = jwt_validate_claims(r, &claims, params);
