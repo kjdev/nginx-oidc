@@ -157,4 +157,4 @@ jobs:
       matrix:
         nginx:
           - ubuntu
-          - '1.29.5'
+          - '1.29.6'
