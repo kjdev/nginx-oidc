@@ -88,8 +88,8 @@ jobs:
             --add-dynamic-module=..
           make
           # Copy module
-          sudo mkdir -p /usr/share/nginx/modules
-          sudo cp objs/ngx_http_oidc_module.so /usr/share/nginx/modules/
+          sudo mkdir -p /usr/lib/nginx/modules
+          sudo cp objs/ngx_http_oidc_module.so /usr/lib/nginx/modules/
           sudo ln -sfn /usr/sbin/nginx /usr/local/sbin/nginx
       - if: ${{ matrix.nginx != 'ubuntu' }}
         name: Build with sources
@@ -117,10 +117,10 @@ jobs:
             --add-dynamic-module=..
           make -j
           # Copy module
-          sudo mkdir -p /usr/share/nginx/modules
-          sudo cp objs/ndk_http_module.so /usr/share/nginx/modules/
-          sudo cp objs/ngx_http_lua_module.so /usr/share/nginx/modules/
-          sudo cp objs/ngx_http_oidc_module.so /usr/share/nginx/modules/
+          sudo mkdir -p /usr/lib/nginx/modules
+          sudo cp objs/ndk_http_module.so /usr/lib/nginx/modules/
+          sudo cp objs/ngx_http_lua_module.so /usr/lib/nginx/modules/
+          sudo cp objs/ngx_http_oidc_module.so /usr/lib/nginx/modules/
           sudo cp objs/nginx /usr/local/sbin/
         env:
           nginx_version: ${{ matrix.nginx }}
@@ -147,7 +147,7 @@ jobs:
           export TEST_NGINX_CONF_DIR="${PWD}/t/conf"
           prove -r t
         env:
-          TEST_NGINX_LOAD_MODULES: /usr/share/nginx/modules/ngx_http_oidc_module.so /usr/share/nginx/modules/ndk_http_module.so /usr/share/nginx/modules/ngx_http_lua_module.so
+          TEST_NGINX_LOAD_MODULES: /usr/lib/nginx/modules/ngx_http_oidc_module.so /usr/lib/nginx/modules/ndk_http_module.so /usr/lib/nginx/modules/ngx_http_lua_module.so
           TEST_NGINX_LUA_DIR: /usr/share/lua/5.1/
           TEST_NGINX_PORT: 1984
           TEST_NGINX_SERVROOT: /tmp/servroot
