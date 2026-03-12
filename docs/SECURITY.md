@@ -192,6 +192,43 @@ The following security features are automatically applied by the module, requiri
 - **at_hash verification**: When the ID Token contains an `at_hash` claim, the binding with the access token is automatically verified
 - **JWT signature verification**: ID Token signatures are automatically verified using public keys obtained from the JWKS endpoint. See [JWT_SUPPORTED_ALGORITHMS.md](JWT_SUPPORTED_ALGORITHMS.md) for details on supported algorithms
 
+## Input Validation and Hardening
+
+The module automatically performs the following input validation to prevent malformed input and protocol abuse.
+
+### Size Limits
+
+The following size limits are enforced to prevent DoS and buffer processing issues from oversized input.
+
+| Target | Limit | Notes |
+|--------|-------|-------|
+| JWT token length | 16 KiB | ID Token, access token |
+| JSON response size | 1 MiB | Token endpoint, UserInfo, etc. |
+| JWKS JSON size | 256 KiB | Response from JWKS endpoint |
+| JWKS key count | 64 | Keys beyond the limit are ignored |
+
+### Algorithm Restrictions
+
+- **HMAC algorithm rejection**: HS256/HS384/HS512 are explicitly rejected. HMAC algorithms use symmetric keys, making them incompatible with public key-based verification (JWKS) and vulnerable to algorithm confusion attacks
+- **Whitelist approach**: Signature algorithms are restricted to a whitelist (RS256/RS384/RS512, PS256/PS384/PS512, ES256/ES384/ES512/ES256K, EdDSA)
+- **alg-curve validation**: For EC keys, the compatibility between the JWT header algorithm and the JWKS key curve is validated (ES256-P-256, ES384-P-384, ES512-P-521, ES256K-secp256k1)
+
+### Key Validation
+
+- **RSA minimum key length**: A minimum of 2048 bits (256 bytes) is required for RSA public keys. Shorter keys are rejected
+- **RSA public exponent validation**: The public exponent must be odd and >= 3
+- **EC coordinate length validation**: EC public key coordinate lengths are validated against the curve (P-256: 32B, P-384: 48B, P-521: 66B)
+- **Encryption key exclusion**: Encryption keys (`use: "enc"`) in JWKS are automatically excluded from signature verification
+
+### Token Format Validation
+
+- **JWE rejection**: JWE tokens with a 5-segment structure are rejected (only 3-segment JWS structure is supported)
+- **Empty segment rejection**: Malformed JWTs with empty header or payload segments are rejected
+
+### JSON Parsing Protection
+
+- **Duplicate key rejection**: Duplicate keys in JSON responses are rejected, preventing ambiguity attacks via key duplication
+
 ## Related Documents
 
 - [README.md](../README.md): Module overview

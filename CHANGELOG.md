@@ -1,5 +1,25 @@
 # Changelog
 
+## [0551cc8] - 2026-03-12
+
+### Fixed
+
+- Security hardening for JSON/JWT/JWKS processing
+  - Add `JSON_REJECT_DUPLICATES` flag to prevent ambiguity attacks via duplicate keys
+  - Add JSON input size limit (1 MiB) before parsing
+  - Introduce `NGX_OIDC_JSON_INVALID` to distinguish NULL input from JSON null value
+  - Add JWT token length limit (16 KiB) to decode and verify functions
+  - Reject empty header/payload segments and JWE (5-segment) tokens
+  - Clear decoded payload buffer with `ngx_memzero` after use
+  - Explicitly reject HMAC algorithms (HS256/HS384/HS512)
+  - Add JWKS JSON size limit (256 KiB) and key count limit (64)
+  - Validate RSA minimum key length (2048 bits) and public exponent (odd, >= 3)
+  - Validate EC coordinate lengths per curve (P-256: 32B, P-384: 48B, P-521: 66B)
+  - Store EC curve name (crv) in key structure for alg-curve compatibility validation
+  - Skip encryption keys (`use: "enc"`) during JWKS parsing
+  - Distinguish signature mismatch (try next key) from internal error (abort)
+  - Ensure `ERR_clear_error()` after each verification failure path
+
 ## [dc560ad] - 2026-03-11
 
 ### Fixed
@@ -34,6 +54,7 @@
 - RP-Initiated Logout
 - Debug status endpoint
 
+[0551cc8]: https://github.com/kjdev/nginx-oidc/commit/0551cc8
 [dc560ad]: https://github.com/kjdev/nginx-oidc/commit/dc560ad
 [2df0445]: https://github.com/kjdev/nginx-oidc/commit/2df0445
 [d37a500]: https://github.com/kjdev/nginx-oidc/commit/d37a500
