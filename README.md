@@ -15,6 +15,8 @@ The nginx OIDC module is a dynamic module that integrates authentication functio
 
 **Scope**: This module handles **authentication** in nginx's ACCESS phase. For details on the authentication flow, see [Authentication Flow Overview](#authentication-flow-overview).
 
+**License**: MIT License
+
 ### Key Features
 
 - **Authorization Code Flow with PKCE**: Authentication flow compliant with OAuth 2.0 / OIDC standards (S256/plain)
@@ -38,8 +40,6 @@ The nginx OIDC module is a dynamic module that integrates authentication functio
 For details, see [SECURITY.md](docs/SECURITY.md).
 
 For commercial version compatibility, see [COMMERCIAL_COMPATIBILITY.md](docs/COMMERCIAL_COMPATIBILITY.md).
-
-**License**: MIT License
 
 ## Quick Start
 
