@@ -1,5 +1,23 @@
 # Changelog
 
+## [5e11050] - 2026-03-17
+
+### Added
+
+- Implement location mode for custom userinfo endpoint
+  - Location mode sends a subrequest to an internal nginx location instead of the IdP's UserInfo endpoint
+  - Custom headers (`X-OIDC-Access-Token`, `X-OIDC-Id-Token`, `X-OIDC-Session-Id`) are passed to the internal location
+  - Sub claim validation is skipped for location mode responses
+  - Supports use cases such as Token Exchange and internal API integration
+
+## [d326a8c] - 2026-03-17
+
+### Added
+
+- Extend `userinfo` directive to accept `on | off | <location>` syntax
+  - Add `ngx_oidc_userinfo_mode_t` type to distinguish provider/location/off modes
+  - Update provider config parsing to handle location name as userinfo value
+
 ## [0551cc8] - 2026-03-12
 
 ### Fixed
@@ -54,6 +72,8 @@
 - RP-Initiated Logout
 - Debug status endpoint
 
+[5e11050]: https://github.com/kjdev/nginx-oidc/commit/5e11050
+[d326a8c]: https://github.com/kjdev/nginx-oidc/commit/d326a8c
 [0551cc8]: https://github.com/kjdev/nginx-oidc/commit/0551cc8
 [dc560ad]: https://github.com/kjdev/nginx-oidc/commit/dc560ad
 [2df0445]: https://github.com/kjdev/nginx-oidc/commit/2df0445
