@@ -57,6 +57,7 @@ typedef struct {
     ngx_http_oidc_provider_t *provider;
     ngx_http_request_t       *main_request;
     ngx_str_t                *session_id;
+    unsigned                  skip_sub_validation:1;
 } callback_userinfo_ctx_t;
 
 /* Token endpoint subrequest completion handler */
@@ -1108,148 +1109,167 @@ callback_userinfo_done(ngx_http_request_t *r, void *data, ngx_int_t rc)
         return NGX_OK;
     }
 
-    /* Extract sub claim from UserInfo */
-    ngx_oidc_json_t *userinfo_sub_json = ngx_oidc_json_object_get(
-        userinfo_json, "sub");
-    if (userinfo_sub_json == NULL
-        || !ngx_oidc_json_is_string(userinfo_sub_json))
-    {
-        ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
-                      "oidc_handler_callback: UserInfo response "
-                      "missing 'sub' claim, continuing without userinfo data");
-        ngx_oidc_json_free(userinfo_json);
-        /* Transition to next phase without userinfo data */
-        main_ctx->callback.state = NGX_HTTP_OIDC_CALLBACK_STATE_SESSION_SAVE;
-        return NGX_OK;
-    }
+    /* Validate sub claim (skip for location mode) */
+    if (!ctx->skip_sub_validation) {
+        /* Extract sub claim from UserInfo */
+        ngx_oidc_json_t *userinfo_sub_json = ngx_oidc_json_object_get(
+            userinfo_json, "sub");
+        if (userinfo_sub_json == NULL
+            || !ngx_oidc_json_is_string(userinfo_sub_json))
+        {
+            ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
+                          "oidc_handler_callback: UserInfo response "
+                          "missing 'sub' claim, continuing without "
+                          "userinfo data");
+            ngx_oidc_json_free(userinfo_json);
+            /* Transition to next phase without userinfo data */
+            main_ctx->callback.state
+                = NGX_HTTP_OIDC_CALLBACK_STATE_SESSION_SAVE;
+            return NGX_OK;
+        }
 
-    const char *userinfo_sub_str = ngx_oidc_json_string(userinfo_sub_json);
-    if (userinfo_sub_str == NULL) {
-        ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
-                      "oidc_handler_callback: failed to get UserInfo "
-                      "sub value, continuing without userinfo data");
-        ngx_oidc_json_free(userinfo_json);
-        /* Transition to next phase without userinfo data */
-        main_ctx->callback.state = NGX_HTTP_OIDC_CALLBACK_STATE_SESSION_SAVE;
-        return NGX_OK;
-    }
+        const char *userinfo_sub_str
+            = ngx_oidc_json_string(userinfo_sub_json);
+        if (userinfo_sub_str == NULL) {
+            ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
+                          "oidc_handler_callback: failed to get UserInfo "
+                          "sub value, continuing without userinfo data");
+            ngx_oidc_json_free(userinfo_json);
+            /* Transition to next phase without userinfo data */
+            main_ctx->callback.state
+                = NGX_HTTP_OIDC_CALLBACK_STATE_SESSION_SAVE;
+            return NGX_OK;
+        }
 
-    ngx_str_t userinfo_sub;
-    userinfo_sub.len = ngx_strlen(userinfo_sub_str);
-    userinfo_sub.data = ngx_pnalloc(main_r->pool, userinfo_sub.len);
-    if (userinfo_sub.data == NULL) {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                      "oidc_handler_callback: failed to allocate userinfo sub");
-        ngx_oidc_json_free(userinfo_json);
-        return NGX_ERROR;
-    }
-    ngx_memcpy(userinfo_sub.data, userinfo_sub_str, userinfo_sub.len);
+        ngx_str_t userinfo_sub;
+        userinfo_sub.len = ngx_strlen(userinfo_sub_str);
+        userinfo_sub.data = ngx_pnalloc(main_r->pool, userinfo_sub.len);
+        if (userinfo_sub.data == NULL) {
+            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                          "oidc_handler_callback: failed to allocate "
+                          "userinfo sub");
+            ngx_oidc_json_free(userinfo_json);
+            return NGX_ERROR;
+        }
+        ngx_memcpy(userinfo_sub.data, userinfo_sub_str, userinfo_sub.len);
 
-    /* Get ID token and extract sub claim for comparison */
-    ngx_str_t id_token_str;
-    if (ngx_oidc_session_get_id_token(main_r, provider->session_store,
-                                      ctx->session_id, &id_token_str)
-        != NGX_OK)
-    {
-        ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
-                      "oidc_handler_callback: failed to retrieve ID token "
-                      "for sub validation, continuing without userinfo data");
-        ngx_oidc_json_free(userinfo_json);
-        /* Transition to next phase without userinfo data */
-        main_ctx->callback.state = NGX_HTTP_OIDC_CALLBACK_STATE_SESSION_SAVE;
-        return NGX_OK;
-    }
+        /* Get ID token and extract sub claim for comparison */
+        ngx_str_t id_token_str;
+        if (ngx_oidc_session_get_id_token(main_r, provider->session_store,
+                                          ctx->session_id, &id_token_str)
+            != NGX_OK)
+        {
+            ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
+                          "oidc_handler_callback: failed to retrieve "
+                          "ID token for sub validation, continuing "
+                          "without userinfo data");
+            ngx_oidc_json_free(userinfo_json);
+            /* Transition to next phase without userinfo data */
+            main_ctx->callback.state
+                = NGX_HTTP_OIDC_CALLBACK_STATE_SESSION_SAVE;
+            return NGX_OK;
+        }
 
-    /* Decode ID token payload to extract sub */
-    ngx_str_t id_token_payload;
-    if (ngx_oidc_jwt_decode_payload(&id_token_str, &id_token_payload,
-                                    main_r->pool)
-        != NGX_OK)
-    {
-        ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
-                      "oidc_handler_callback: failed to decode ID token "
-                      "for sub validation, continuing without userinfo data");
-        ngx_oidc_json_free(userinfo_json);
-        /* Transition to next phase without userinfo data */
-        main_ctx->callback.state = NGX_HTTP_OIDC_CALLBACK_STATE_SESSION_SAVE;
-        return NGX_OK;
-    }
+        /* Decode ID token payload to extract sub */
+        ngx_str_t id_token_payload;
+        if (ngx_oidc_jwt_decode_payload(&id_token_str, &id_token_payload,
+                                        main_r->pool)
+            != NGX_OK)
+        {
+            ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
+                          "oidc_handler_callback: failed to decode ID "
+                          "token for sub validation, continuing without "
+                          "userinfo data");
+            ngx_oidc_json_free(userinfo_json);
+            /* Transition to next phase without userinfo data */
+            main_ctx->callback.state
+                = NGX_HTTP_OIDC_CALLBACK_STATE_SESSION_SAVE;
+            return NGX_OK;
+        }
 
-    /* Parse ID token payload JSON using abstraction layer */
-    ngx_oidc_json_t *id_token_json = ngx_oidc_json_parse(&id_token_payload,
-                                                         main_r->pool);
-    if (id_token_json == NULL) {
-        ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
-                      "oidc_handler_callback: failed to parse ID token "
-                      "payload JSON, continuing without userinfo data");
-        ngx_oidc_json_free(userinfo_json);
-        /* Transition to next phase without userinfo data */
-        main_ctx->callback.state = NGX_HTTP_OIDC_CALLBACK_STATE_SESSION_SAVE;
-        return NGX_OK;
-    }
+        /* Parse ID token payload JSON using abstraction layer */
+        ngx_oidc_json_t *id_token_json
+            = ngx_oidc_json_parse(&id_token_payload, main_r->pool);
+        if (id_token_json == NULL) {
+            ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
+                          "oidc_handler_callback: failed to parse ID "
+                          "token payload JSON, continuing without "
+                          "userinfo data");
+            ngx_oidc_json_free(userinfo_json);
+            /* Transition to next phase without userinfo data */
+            main_ctx->callback.state
+                = NGX_HTTP_OIDC_CALLBACK_STATE_SESSION_SAVE;
+            return NGX_OK;
+        }
 
-    /* Extract sub claim from ID token */
-    ngx_oidc_json_t *id_token_sub_json = ngx_oidc_json_object_get(
-        id_token_json, "sub");
-    if (id_token_sub_json == NULL
-        || !ngx_oidc_json_is_string(id_token_sub_json))
-    {
-        ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
-                      "oidc_handler_callback: ID token missing sub claim, "
-                      "continuing without userinfo data");
+        /* Extract sub claim from ID token */
+        ngx_oidc_json_t *id_token_sub_json = ngx_oidc_json_object_get(
+            id_token_json, "sub");
+        if (id_token_sub_json == NULL
+            || !ngx_oidc_json_is_string(id_token_sub_json))
+        {
+            ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
+                          "oidc_handler_callback: ID token missing sub "
+                          "claim, continuing without userinfo data");
+            ngx_oidc_json_free(id_token_json);
+            ngx_oidc_json_free(userinfo_json);
+            /* Transition to next phase without userinfo data */
+            main_ctx->callback.state
+                = NGX_HTTP_OIDC_CALLBACK_STATE_SESSION_SAVE;
+            return NGX_OK;
+        }
+
+        const char *id_token_sub_str
+            = ngx_oidc_json_string(id_token_sub_json);
+        if (id_token_sub_str == NULL) {
+            ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
+                          "oidc_handler_callback: failed to get ID token "
+                          "sub value, continuing without userinfo data");
+            ngx_oidc_json_free(id_token_json);
+            ngx_oidc_json_free(userinfo_json);
+            /* Transition to next phase without userinfo data */
+            main_ctx->callback.state
+                = NGX_HTTP_OIDC_CALLBACK_STATE_SESSION_SAVE;
+            return NGX_OK;
+        }
+
+        ngx_str_t id_token_sub;
+        id_token_sub.len = ngx_strlen(id_token_sub_str);
+        id_token_sub.data = ngx_pnalloc(main_r->pool, id_token_sub.len);
+        if (id_token_sub.data == NULL) {
+            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                          "oidc_handler_callback: failed to allocate "
+                          "id_token sub");
+            ngx_oidc_json_free(id_token_json);
+            ngx_oidc_json_free(userinfo_json);
+            return NGX_ERROR;
+        }
+        ngx_memcpy(id_token_sub.data, id_token_sub_str, id_token_sub.len);
+
+        /* Compare sub claims using constant-time comparison */
+        ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                       "oidc_handler_callback: validating UserInfo sub "
+                       "- ID token sub='%V', UserInfo sub='%V'",
+                       &id_token_sub, &userinfo_sub);
+
+        if (ngx_oidc_secure_compare(id_token_sub.data, id_token_sub.len,
+                                    userinfo_sub.data, userinfo_sub.len)
+            != NGX_OK)
+        {
+            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                          "oidc_handler_callback: UserInfo sub validation "
+                          "failed - sub mismatch");
+            ngx_oidc_json_free(id_token_json);
+            ngx_oidc_json_free(userinfo_json);
+            return NGX_ERROR;
+        }
+
+        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                       "oidc_handler_callback: UserInfo sub validation "
+                       "successful");
+
         ngx_oidc_json_free(id_token_json);
-        ngx_oidc_json_free(userinfo_json);
-        /* Transition to next phase without userinfo data */
-        main_ctx->callback.state = NGX_HTTP_OIDC_CALLBACK_STATE_SESSION_SAVE;
-        return NGX_OK;
     }
-
-    const char *id_token_sub_str = ngx_oidc_json_string(id_token_sub_json);
-    if (id_token_sub_str == NULL) {
-        ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
-                      "oidc_handler_callback: failed to get ID token "
-                      "sub value, continuing without userinfo data");
-        ngx_oidc_json_free(id_token_json);
-        ngx_oidc_json_free(userinfo_json);
-        /* Transition to next phase without userinfo data */
-        main_ctx->callback.state = NGX_HTTP_OIDC_CALLBACK_STATE_SESSION_SAVE;
-        return NGX_OK;
-    }
-
-    ngx_str_t id_token_sub;
-    id_token_sub.len = ngx_strlen(id_token_sub_str);
-    id_token_sub.data = ngx_pnalloc(main_r->pool, id_token_sub.len);
-    if (id_token_sub.data == NULL) {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                      "oidc_handler_callback: failed to allocate id_token sub");
-        ngx_oidc_json_free(id_token_json);
-        ngx_oidc_json_free(userinfo_json);
-        return NGX_ERROR;
-    }
-    ngx_memcpy(id_token_sub.data, id_token_sub_str, id_token_sub.len);
-
-    /* Compare sub claims using constant-time comparison */
-    ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                   "oidc_handler_callback: validating UserInfo sub "
-                   "- ID token sub='%V', UserInfo sub='%V'",
-                   &id_token_sub, &userinfo_sub);
-
-    if (ngx_oidc_secure_compare(id_token_sub.data, id_token_sub.len,
-                                userinfo_sub.data, userinfo_sub.len)
-        != NGX_OK)
-    {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                      "oidc_handler_callback: UserInfo sub validation failed - "
-                      "sub mismatch");
-        ngx_oidc_json_free(id_token_json);
-        ngx_oidc_json_free(userinfo_json);
-        return NGX_ERROR;
-    }
-
-    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                   "oidc_handler_callback: UserInfo sub validation successful");
-
-    ngx_oidc_json_free(id_token_json);
 
     /* Serialize userinfo JSON to compact format (no whitespace)
      * to avoid newlines that would cause issues in HTTP headers */
@@ -1377,6 +1397,7 @@ callback_fetch_userinfo(ngx_http_request_t *r,
     ctx->provider = provider;
     ctx->main_request = r;
     ctx->session_id = session_id;
+    ctx->skip_sub_validation = 0;
 
     /* Fetch UserInfo using HTTP Module with Bearer token */
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
@@ -1390,6 +1411,137 @@ callback_fetch_userinfo(ngx_http_request_t *r,
     {
         return NGX_ERROR;
     }
+
+    return NGX_AGAIN;
+}
+
+/**
+ * Fetch UserInfo from internal location
+ *
+ * Creates a subrequest to the configured internal location, passing
+ * OIDC tokens via custom headers. The location handler can perform
+ * custom processing (e.g., Token Exchange, API calls) and return
+ * a JSON response that will be stored as userinfo.
+ *
+ * Sub claim validation is skipped for location mode since the response
+ * comes from an internal handler, not the IdP's userinfo_endpoint.
+ */
+static ngx_int_t
+callback_fetch_userinfo_location(ngx_http_request_t *r,
+    ngx_http_oidc_provider_t *provider, ngx_str_t *session_id)
+{
+    callback_userinfo_ctx_t *ctx;
+    ngx_http_post_subrequest_t *ps;
+    ngx_http_request_t *sr;
+    ngx_str_t access_token;
+    ngx_str_t id_token;
+    ngx_table_elt_t *h;
+    ngx_int_t rc;
+
+    /* Get access_token from session store */
+    rc = ngx_oidc_session_get_access_token(r, provider->session_store,
+                                           session_id, &access_token);
+    if (rc != NGX_OK) {
+        ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
+                      "oidc_handler_callback: access_token not found "
+                      "in session store for userinfo location fetch");
+        return NGX_ERROR;
+    }
+
+    ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                   "oidc_handler_callback: fetching userinfo from "
+                   "location %V for session %V",
+                   &provider->userinfo_location, session_id);
+
+    /* Prepare context for callback */
+    ctx = ngx_palloc(r->pool, sizeof(callback_userinfo_ctx_t));
+    if (ctx == NULL) {
+        return NGX_ERROR;
+    }
+    ctx->provider = provider;
+    ctx->main_request = r;
+    ctx->session_id = session_id;
+    ctx->skip_sub_validation = 1;
+
+    /* Allocate post subrequest structure */
+    ps = ngx_palloc(r->pool, sizeof(ngx_http_post_subrequest_t));
+    if (ps == NULL) {
+        return NGX_ERROR;
+    }
+
+    ps->handler = callback_userinfo_done;
+    ps->data = ctx;
+
+    /* Create subrequest to internal location */
+    if (ngx_http_subrequest(r, &provider->userinfo_location, NULL, &sr, ps,
+                            NGX_HTTP_SUBREQUEST_IN_MEMORY)
+        != NGX_OK)
+    {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                      "oidc_handler_callback: failed to create "
+                      "userinfo location subrequest");
+        return NGX_ERROR;
+    }
+
+    /* Re-initialize headers with only custom OIDC headers.
+     * This replaces the inherited parent request headers, ensuring
+     * the internal location only sees OIDC-specific headers.
+     * The old list memory is reclaimed when the request pool
+     * is destroyed. */
+    if (ngx_list_init(&sr->headers_in.headers, r->pool, 8,
+                      sizeof(ngx_table_elt_t))
+        != NGX_OK)
+    {
+        return NGX_ERROR;
+    }
+
+    /* Add X-OIDC-Access-Token header */
+    h = ngx_list_push(&sr->headers_in.headers);
+    if (h == NULL) {
+        return NGX_ERROR;
+    }
+    ngx_str_set(&h->key, "X-OIDC-Access-Token");
+    h->value = access_token;
+    h->lowcase_key = (u_char *) "x-oidc-access-token";
+    h->hash = ngx_hash_key(h->lowcase_key,
+                           sizeof("x-oidc-access-token") - 1);
+
+    /* Add X-OIDC-Id-Token header if available */
+    rc = ngx_oidc_session_get_id_token(r, provider->session_store,
+                                       session_id, &id_token);
+    if (rc == NGX_OK && id_token.len > 0) {
+        h = ngx_list_push(&sr->headers_in.headers);
+        if (h == NULL) {
+            return NGX_ERROR;
+        }
+        ngx_str_set(&h->key, "X-OIDC-Id-Token");
+        h->value = id_token;
+        h->lowcase_key = (u_char *) "x-oidc-id-token";
+        h->hash = ngx_hash_key(h->lowcase_key,
+                               sizeof("x-oidc-id-token") - 1);
+    }
+
+    /* Add X-OIDC-Session-Id header */
+    h = ngx_list_push(&sr->headers_in.headers);
+    if (h == NULL) {
+        return NGX_ERROR;
+    }
+    ngx_str_set(&h->key, "X-OIDC-Session-Id");
+    h->value = *session_id;
+    h->lowcase_key = (u_char *) "x-oidc-session-id";
+    h->hash = ngx_hash_key(h->lowcase_key,
+                           sizeof("x-oidc-session-id") - 1);
+
+    /* Set empty request body (GET request) */
+    sr->request_body = ngx_pcalloc(r->pool, sizeof(ngx_http_request_body_t));
+    if (sr->request_body == NULL) {
+        return NGX_ERROR;
+    }
+
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                   "oidc_handler_callback: created userinfo location "
+                   "subrequest to %V",
+                   &provider->userinfo_location);
 
     return NGX_AGAIN;
 }
@@ -1568,8 +1720,12 @@ callback_phase_userinfo(ngx_http_request_t *r, ngx_http_oidc_ctx_t *ctx,
                        "fetching userinfo for session %V",
                        session_id);
 
-        /* Initiate UserInfo fetch - delegate to existing function */
-        rc = callback_fetch_userinfo(r, provider, session_id);
+        /* Initiate UserInfo fetch - delegate based on mode */
+        if (provider->userinfo_mode == NGX_OIDC_USERINFO_LOCATION) {
+            rc = callback_fetch_userinfo_location(r, provider, session_id);
+        } else {
+            rc = callback_fetch_userinfo(r, provider, session_id);
+        }
 
         if (rc == NGX_AGAIN) {
             /* Subrequest in progress - will re-enter at same state */
