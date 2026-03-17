@@ -192,7 +192,7 @@ The OIDC module implements the OpenID Connect Authorization Code Flow.
 
 ![OIDC Authentication Code Flow](docs/images/oidc-auth-flow.png)
 
-> **Note**: To enable UserInfo retrieval (the `userinfo on` section), set `userinfo on;` within `oidc_provider`. For details, see [DIRECTIVES.md](docs/DIRECTIVES.md#userinfo).
+> **Note**: To enable UserInfo retrieval, set `userinfo on;` (IdP's UserInfo endpoint) or `userinfo /<location>;` (internal location) within `oidc_provider`. For details, see [DIRECTIVES.md](docs/DIRECTIVES.md#userinfo).
 
 ### Standards Reference
 

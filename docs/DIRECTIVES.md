@@ -281,13 +281,27 @@ Controls whether to include id_token_hint during logout.
 #### userinfo
 
 ```
-Syntax:  userinfo on | off;
+Syntax:  userinfo on | off | <location>;
 Default: off
 ```
 
-Retrieves information from the UserInfo endpoint. When enabled, `$oidc_claim_*` variables can supplement claims not present in the ID Token with information from the UserInfo endpoint (ID Token claims take priority).
+Controls how UserInfo is retrieved.
 
-If the request to the UserInfo endpoint fails (timeout, HTTP error, etc.), a warning is logged but the authentication flow itself continues (graceful degradation). In this case, `$oidc_userinfo` will be empty.
+- `on` — Retrieves information from the OIDC provider's UserInfo endpoint. `$oidc_claim_*` variables can supplement claims not present in the ID Token with information from the UserInfo endpoint (ID Token claims take priority). The `sub` claim in the response is validated against the ID Token's `sub`.
+- `off` — UserInfo is not retrieved.
+- `<location>` — Specifies an internal nginx location path starting with `/`. Instead of the OIDC provider's UserInfo endpoint, a subrequest is sent to the specified internal location. This can be used for custom processing such as Token Exchange or internal API integration.
+
+In location mode, the following headers are added to the subrequest:
+
+| Header | Value |
+|--------|-------|
+| `X-OIDC-Access-Token` | Access token |
+| `X-OIDC-Id-Token` | ID token (if available) |
+| `X-OIDC-Session-Id` | Session ID |
+
+In location mode, `sub` claim validation is not performed. The response must be in JSON format.
+
+If UserInfo retrieval fails (timeout, HTTP error, non-JSON response, etc.), a warning is logged but the authentication flow itself continues (graceful degradation). In this case, `$oidc_userinfo` will be empty.
 
 **Full configuration example**:
 ```nginx
@@ -549,7 +563,7 @@ The OIDC module needs to communicate with the external OIDC provider for the fol
 1. **OpenID Connect Discovery**: Retrieving provider metadata (including resolving the `end_session_endpoint` URL for RP-Initiated Logout)
 2. **JWKS (JSON Web Key Set)**: Retrieving public keys for token verification
 3. **Token Exchange**: Exchanging authorization codes for tokens
-4. **UserInfo**: Retrieving user information (when `userinfo on` is set)
+4. **UserInfo**: Retrieving user information (when `userinfo on` or `userinfo <location>` is set)
 
 In nginx, external HTTP requests are made using subrequests. The `/_oidc_http_fetch` location functions as an internal proxy for handling these subrequests.
 
@@ -860,7 +874,7 @@ location / {
 
 Claim availability depends on the OIDC provider and configured scopes.
 
-When `userinfo on` is set, claims not present in the ID Token are supplemented from the UserInfo endpoint response (ID Token claims take priority).
+When `userinfo on` or `userinfo <location>` is set, claims not present in the ID Token are supplemented from the UserInfo response (ID Token claims take priority).
 
 ### $oidc_authenticated
 
@@ -890,17 +904,19 @@ When using `auth_oidc_mode verify`, use this variable to make authentication dec
 
 ### $oidc_userinfo
 
-Information retrieved from the UserInfo endpoint (JSON format).
+Information retrieved from UserInfo (JSON format).
 
 **Value**:
-- When `userinfo on` and authenticated: UserInfo JSON string
+- When `userinfo on` or `userinfo <location>` and authenticated: UserInfo JSON string
 - Otherwise: Empty (variable undefined)
 
 **Usage example**:
 ```nginx
 oidc_provider my_provider {
     # ...
-    userinfo on;  # Enable UserInfo retrieval
+    userinfo on;  # Retrieve from IdP's UserInfo endpoint
+    # or
+    # userinfo /_custom_userinfo;  # Retrieve from internal location
 }
 
 location / {
@@ -909,7 +925,7 @@ location / {
 }
 ```
 
-This variable is only populated when `userinfo on` is configured.
+This variable is only populated when `userinfo on` or `userinfo <location>` is configured.
 
 ### Internal Fetch Variables
 

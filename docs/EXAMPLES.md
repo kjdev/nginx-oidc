@@ -547,6 +547,46 @@ server {
 }
 ```
 
+### Custom UserInfo Endpoint (Location Mode)
+
+Instead of using the IdP's UserInfo endpoint, this configuration uses an internal location for custom processing, making the result available as `$oidc_userinfo`. This supports use cases such as Token Exchange and internal API integration.
+
+**Note**: The following is an excerpt of the provider and server block. The actual configuration also requires `oidc_session_store` and `/_oidc_http_fetch` location (see [Basic Configuration with Memory Store](#basic-configuration-with-memory-store)).
+
+```nginx
+oidc_provider my_provider {
+    issuer "https://accounts.example.com";
+    client_id "my-client-id";
+    client_secret "my-client-secret";
+    session_store memory_store;
+    redirect_uri "/oauth2/callback";
+
+    # Retrieve custom UserInfo from internal location
+    userinfo /_custom_userinfo;
+}
+
+server {
+    auth_oidc my_provider;
+
+    # Custom UserInfo handler
+    # X-OIDC-Access-Token, X-OIDC-Id-Token, X-OIDC-Session-Id headers
+    # are automatically added to the subrequest
+    location = /_custom_userinfo {
+        internal;
+        auth_oidc off;
+
+        # Example: Retrieve user info from internal API using access token
+        proxy_pass http://internal-api/users/me;
+        proxy_set_header Authorization "Bearer $http_x_oidc_access_token";
+    }
+
+    location / {
+        proxy_pass http://backend;
+        proxy_set_header X-UserInfo $oidc_userinfo;
+    }
+}
+```
+
 ## Related Documents
 
 - [README.md](../README.md): Module overview
