@@ -66,6 +66,8 @@ static char *ngx_http_oidc_session_store_command(ngx_conf_t *cf,
 static char *ngx_http_oidc_scopes(ngx_conf_t *cf, ngx_command_t *cmd,
     void *conf);
 static char *ngx_http_oidc_auth(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
+static char *ngx_http_oidc_set_userinfo(ngx_conf_t *cf, ngx_command_t *cmd,
+    void *conf);
 static char *ngx_http_oidc_set_mode(ngx_conf_t *cf, ngx_command_t *cmd,
     void *conf);
 static char *ngx_http_oidc_set_status(ngx_conf_t *cf, ngx_command_t *cmd,
@@ -118,7 +120,7 @@ typedef struct {
             (p)->pkce.enable = NGX_CONF_UNSET; \
             (p)->pkce.method_cv = NULL; \
             (p)->logout.token_hint = NGX_CONF_UNSET; \
-            (p)->fetch_userinfo = NGX_CONF_UNSET; \
+            (p)->userinfo_mode = NGX_CONF_UNSET_UINT; \
             (p)->session_timeout = NGX_CONF_UNSET; \
             (p)->clock_skew = NGX_CONF_UNSET; \
         } while (0)
@@ -240,9 +242,8 @@ static ngx_command_t ngx_http_oidc_commands[] = {
     { ngx_string("logout_token_hint"), NGX_HTTP_MAIN_CONF | NGX_CONF_FLAG,
       ngx_conf_set_flag_slot, 0,
       ngx_offsetof_nested(ngx_http_oidc_provider_t, logout, token_hint), NULL },
-    { ngx_string("userinfo"), NGX_HTTP_MAIN_CONF | NGX_CONF_FLAG,
-      ngx_conf_set_flag_slot, 0,
-      offsetof(ngx_http_oidc_provider_t, fetch_userinfo), NULL },
+    { ngx_string("userinfo"), NGX_HTTP_MAIN_CONF | NGX_CONF_TAKE1,
+      ngx_http_oidc_set_userinfo, 0, 0, NULL },
     /* module */
     { ngx_string("auth_oidc"),
       NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
@@ -1709,9 +1710,10 @@ ngx_http_oidc_init_main_conf(ngx_conf_t *cf, void *conf)
              * Disabled by default */
             ngx_conf_init_value(provider[i].logout.token_hint, 0);
 
-            /* Set fetch_userinfo default if not explicitly configured
+            /* Set userinfo_mode default if not explicitly configured
              * Disabled by default */
-            ngx_conf_init_value(provider[i].fetch_userinfo, 0);
+            ngx_conf_init_uint_value(provider[i].userinfo_mode,
+                                     NGX_OIDC_USERINFO_OFF);
 
             /* Set default session store if not explicitly configured */
             if (provider[i].session_store == NULL) {
@@ -1947,6 +1949,32 @@ ngx_http_oidc_init(ngx_conf_t *cf)
                                        "required configuration.",
                                        NGX_OIDC_FETCH_PATH);
                     return NGX_ERROR;
+                }
+
+                /* Validate userinfo location exists if configured */
+                {
+                    ngx_http_oidc_provider_t *providers;
+                    ngx_uint_t i;
+
+                    providers = omcf->providers->elts;
+                    for (i = 0; i < omcf->providers->nelts; i++) {
+                        if (providers[i].userinfo_mode
+                            == NGX_OIDC_USERINFO_LOCATION)
+                        {
+                            if (ngx_http_oidc_find_location(
+                                    cf, &providers[i].userinfo_location)
+                                != NGX_OK)
+                            {
+                                ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                                                   "OIDC provider \"%V\": userinfo "
+                                                   "location \"%V\" not found",
+                                                   &providers[i].name,
+                                                   &providers[i].
+                                                   userinfo_location);
+                                return NGX_ERROR;
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -2367,6 +2395,37 @@ ngx_http_oidc_auth(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
     ccv.complex_value = olcf->provider_name;
 
     if (ngx_http_compile_complex_value(&ccv) != NGX_OK) {
+        return NGX_CONF_ERROR;
+    }
+
+    return NGX_CONF_OK;
+}
+
+static char *
+ngx_http_oidc_set_userinfo(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
+{
+    ngx_http_oidc_provider_t *provider = conf;
+    ngx_str_t *value;
+
+    value = cf->args->elts;
+
+    if (provider->userinfo_mode != NGX_CONF_UNSET_UINT) {
+        return "is duplicate";
+    }
+
+    if (ngx_strcmp(value[1].data, "on") == 0) {
+        provider->userinfo_mode = NGX_OIDC_USERINFO_ON;
+    } else if (ngx_strcmp(value[1].data, "off") == 0) {
+        provider->userinfo_mode = NGX_OIDC_USERINFO_OFF;
+    } else if (value[1].len > 0 && value[1].data[0] == '/') {
+        provider->userinfo_mode = NGX_OIDC_USERINFO_LOCATION;
+        provider->userinfo_location = value[1];
+    } else {
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                           "invalid value \"%V\" in \"userinfo\" "
+                           "directive, must be \"on\", \"off\", "
+                           "or a location path starting with \"/\"",
+                           &value[1]);
         return NGX_CONF_ERROR;
     }
 

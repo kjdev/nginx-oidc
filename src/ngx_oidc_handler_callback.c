@@ -231,7 +231,7 @@ callback_token_done(ngx_http_request_t *r, void *data, ngx_int_t rc)
             ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                            "oidc_handler_callback: transitioning "
                            "to TOKEN_VERIFY phase");
-        } else if (provider->fetch_userinfo) {
+        } else if (provider->userinfo_mode != NGX_OIDC_USERINFO_OFF) {
             /* No ID token, but userinfo requested */
             main_ctx->callback.state =
                 NGX_HTTP_OIDC_CALLBACK_STATE_FETCH_USERINFO;
@@ -1668,7 +1668,7 @@ callback_phase_verify(ngx_http_request_t *r, ngx_http_oidc_ctx_t *ctx,
                        "token verification completed");
 
         /* Transition to next phase */
-        if (provider->fetch_userinfo) {
+        if (provider->userinfo_mode != NGX_OIDC_USERINFO_OFF) {
             /* Fetch UserInfo endpoint */
             ctx->callback.state = NGX_HTTP_OIDC_CALLBACK_STATE_FETCH_USERINFO;
             ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,

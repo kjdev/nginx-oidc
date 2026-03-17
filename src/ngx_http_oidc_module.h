@@ -24,6 +24,13 @@
 /* Internal location for HTTP requests to OIDC providers */
 #define NGX_OIDC_FETCH_PATH "/_oidc_http_fetch"
 
+/** UserInfo fetch mode */
+typedef enum {
+    NGX_OIDC_USERINFO_OFF = 0,
+    NGX_OIDC_USERINFO_ON,
+    NGX_OIDC_USERINFO_LOCATION
+} ngx_oidc_userinfo_mode_t;
+
 /** OIDC provider configuration */
 typedef struct {
     /** provider name */
@@ -81,8 +88,10 @@ typedef struct {
     time_t                    session_timeout;
     /** clock skew tolerance */
     time_t                    clock_skew;
-    /** fetch userinfo flag */
-    ngx_flag_t                fetch_userinfo;
+    /** userinfo fetch mode */
+    ngx_uint_t                userinfo_mode;
+    /** userinfo location (for NGX_OIDC_USERINFO_LOCATION mode) */
+    ngx_str_t                 userinfo_location;
 } ngx_http_oidc_provider_t;
 
 /** OIDC module main configuration (http block level) */
