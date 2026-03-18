@@ -37,6 +37,7 @@ jobs:
             libjansson-dev \
             libnginx-mod-http-lua \
             luarocks \
+            netcat-openbsd \
             nginx \
             nginx-dev \
             redis
@@ -133,20 +134,30 @@ jobs:
           ${TEST_NGINX_BINARY} -V
           echo "::endgroup::"
           # Run IdP stub
-          docker run \
-            --rm --detach \
-            --name oidc-stub \
-            -p 8888:8888 \
-            -e OIDC_CLIENT_ID="test" \
-            -e OIDC_CLIENT_SECRET="b028e7a42bbb072acf09ed342e760627" \
-            -e OIDC_REDIRECT_URI="http://127.0.0.1:1984/oidc_callback" \
-            ghcr.io/kjdev/oidc-provider-stub &>/dev/null
+          echo "::group::run oidc stub"
+          curl -sfSLO "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz"
+          tar -zxf "oras_${ORAS_VERSION}_linux_amd64.tar.gz" oras
+          ./oras pull ghcr.io/kjdev/oidc-provider-stub:static
+          chmod 755 ./oidc-provider-stub
+          nohup ./oidc-provider-stub php-server --listen :8888 > /dev/null 2>&1 &
+          timeout 30 sh -c "while ! nc -z localhost 8888; do sleep 1; done"
+          if [ $? -eq 124 ]; then
+            echo "Timeout: Port 8888 was not opened within 30 seconds."
+            exit 1
+          fi
+          echo "::endgroup::"
           # Run Redis
+          echo "::group::run redis"
           redis-server --daemonize yes
+          echo "::endgroup::"
           # Run test
           export TEST_NGINX_CONF_DIR="${PWD}/t/conf"
           prove -r t
         env:
+          ORAS_VERSION: 1.3.1
+          OIDC_CLIENT_ID: test
+          OIDC_CLIENT_SECRET: b028e7a42bbb072acf09ed342e760627
+          OIDC_REDIRECT_URI: http://127.0.0.1:1984/oidc_callback
           TEST_NGINX_LOAD_MODULES: /usr/lib/nginx/modules/ngx_http_oidc_module.so /usr/lib/nginx/modules/ndk_http_module.so /usr/lib/nginx/modules/ngx_http_lua_module.so
           TEST_NGINX_LUA_DIR: /usr/share/lua/5.1/
           TEST_NGINX_PORT: 1984
