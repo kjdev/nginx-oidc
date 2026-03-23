@@ -6,15 +6,6 @@ Overview, key features, and quick start guide for the nginx OIDC module.
 
 The nginx OIDC module is a dynamic module that integrates authentication functionality based on the OpenID Connect (OIDC) protocol into nginx. When an unauthenticated user accesses a protected page, they are redirected to the login screen of an OIDC provider (Google, Azure AD, Keycloak, etc.), and after successful authentication, they are automatically returned to the original page. Authentication information is passed to backend applications through nginx variables, so no authentication implementation is needed on the backend side.
 
-**Use case examples**:
-- Add OIDC authentication to backend applications, allowing access only to logged-in users
-- Forward user information (email, name, etc.) to the backend
-- Switch display based on authentication state (coexistence of authenticated/unauthenticated users)
-- Operate multiple OIDC providers (Google + Azure AD, etc.) on the same nginx instance
-- Logout in coordination with the OIDC provider
-
-**Scope**: This module handles **authentication** in nginx's ACCESS phase. For details on the authentication flow, see [Authentication Flow Overview](#authentication-flow-overview).
-
 **License**: MIT License
 
 ### Key Features
