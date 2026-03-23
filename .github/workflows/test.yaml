@@ -79,7 +79,7 @@ jobs:
             nginx \
             nginx-mod-http-lua \
             openssl-dev \
-            pcre-dev \
+            pcre2-dev \
             perl-dev \
             perl-utils \
             py3-cryptography \
