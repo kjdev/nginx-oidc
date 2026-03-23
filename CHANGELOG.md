@@ -1,6 +1,6 @@
 # Changelog
 
-## [5e11050] - 2026-03-17
+## [5e11050](../../commit/5e11050) - 2026-03-17
 
 ### Added
 
@@ -10,7 +10,7 @@
   - Sub claim validation is skipped for location mode responses
   - Supports use cases such as Token Exchange and internal API integration
 
-## [d326a8c] - 2026-03-17
+## [d326a8c](../../commit/d326a8c) - 2026-03-17
 
 ### Added
 
@@ -18,7 +18,7 @@
   - Add `ngx_oidc_userinfo_mode_t` type to distinguish provider/location/off modes
   - Update provider config parsing to handle location name as userinfo value
 
-## [0551cc8] - 2026-03-12
+## [0551cc8](../../commit/0551cc8) - 2026-03-12
 
 ### Fixed
 
@@ -38,7 +38,7 @@
   - Distinguish signature mismatch (try next key) from internal error (abort)
   - Ensure `ERR_clear_error()` after each verification failure path
 
-## [dc560ad] - 2026-03-11
+## [dc560ad](../../commit/dc560ad) - 2026-03-11
 
 ### Fixed
 
@@ -46,19 +46,19 @@
   - nginx 1.29.6 changed `ngx_http_parse_multi_header_lines` to use comma separator only and introduced `ngx_http_parse_cookie_lines` for semicolon-separated Cookie headers
   - This caused cookie lookup failures resulting in 401 errors during OIDC callback processing
 
-## [2df0445] - 2026-03-02
+## [2df0445](../../commit/2df0445) - 2026-03-02
 
 ### Changed
 
 - `oidc_provider` `session_store` now uses a dedicated default store instead of the first user-defined store
 
-## [d37a500] - 2026-03-02
+## [d37a500](../../commit/d37a500) - 2026-03-02
 
 ### Changed
 
 - **BREAKING:** Renamed `enable_pkce` directive to `pkce` for commercial version compatibility
 
-## [3fc28b4] - 2026-02-17
+## [3fc28b4](../../commit/3fc28b4) - 2026-02-17
 
 ### Added
 
@@ -71,11 +71,3 @@
 - Authentication mode control (`auth_oidc_mode`): `off`, `verify`, `require`
 - RP-Initiated Logout
 - Debug status endpoint
-
-[5e11050]: https://github.com/kjdev/nginx-oidc/commit/5e11050
-[d326a8c]: https://github.com/kjdev/nginx-oidc/commit/d326a8c
-[0551cc8]: https://github.com/kjdev/nginx-oidc/commit/0551cc8
-[dc560ad]: https://github.com/kjdev/nginx-oidc/commit/dc560ad
-[2df0445]: https://github.com/kjdev/nginx-oidc/commit/2df0445
-[d37a500]: https://github.com/kjdev/nginx-oidc/commit/d37a500
-[3fc28b4]: https://github.com/kjdev/nginx-oidc/commit/3fc28b4
