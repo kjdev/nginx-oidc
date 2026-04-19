@@ -46,7 +46,7 @@
 #include <openssl/obj_mac.h>
 #include "ngx_oidc_jwt.h"
 #include "ngx_oidc_jwks.h"
-#include "ngx_oidc_json.h"
+#include "nxe_json.h"
 #include "ngx_oidc_hash.h"
 
 /*
@@ -210,13 +210,14 @@ jwt_get_openssl_error(char *buf, size_t buf_len)
  *         NGX_ERROR if required claim missing or invalid type
  */
 static ngx_int_t
-jwt_get_time_claim(ngx_oidc_json_t *root, const char *claim_name,
+jwt_get_time_claim(nxe_json_t *root, const char *claim_name,
     time_t *result, ngx_int_t required, ngx_pool_t *pool)
 {
-    ngx_oidc_json_t *value;
-    ngx_int_t int_value;
+    nxe_json_t *value;
+    int64_t int_value;
+    double real_value;
 
-    value = ngx_oidc_json_object_get(root, claim_name);
+    value = nxe_json_object_get(root, claim_name);
     if (value == NULL) {
         if (required) {
             ngx_log_error(NGX_LOG_ERR, pool->log, 0,
@@ -226,13 +227,17 @@ jwt_get_time_claim(ngx_oidc_json_t *root, const char *claim_name,
         return NGX_DECLINED; /* Optional claim not present */
     }
 
-    if (ngx_oidc_json_is_integer(value)) {
-        int_value = ngx_oidc_json_integer(value);
+    if (nxe_json_is_integer(value)) {
+        if (nxe_json_integer(value, &int_value) != NGX_OK) {
+            return NGX_ERROR;
+        }
         *result = (time_t) int_value;
         return NGX_OK;
-    } else if (ngx_oidc_json_type(value) == NGX_OIDC_JSON_REAL) {
+    } else if (nxe_json_is_real(value)) {
         /* Handle floating-point time (e.g., with microseconds) */
-        double real_value = ngx_oidc_json_real(value);
+        if (nxe_json_real(value, &real_value) != NGX_OK) {
+            return NGX_ERROR;
+        }
         *result = (time_t) real_value; /* Truncate to seconds */
         ngx_log_debug3(NGX_LOG_DEBUG_HTTP, pool->log, 0,
                        "oidc_jwt: %s claim is floating-point: %f -> %T",
@@ -264,8 +269,8 @@ static ngx_int_t
 jwt_parse_claims(const char *payload_json, jwt_claims_t *claims,
     ngx_pool_t *pool)
 {
-    ngx_oidc_json_t *root, *value;
-    const char *string_value;
+    nxe_json_t *root, *value;
+    ngx_str_t str_value;
     ngx_str_t json_str;
 
     ngx_memzero(claims, sizeof(jwt_claims_t));
@@ -273,88 +278,88 @@ jwt_parse_claims(const char *payload_json, jwt_claims_t *claims,
     json_str.data = (u_char *) payload_json;
     json_str.len = ngx_strlen(payload_json);
 
-    root = ngx_oidc_json_parse(&json_str, pool);
+    root = nxe_json_parse(&json_str, pool);
     if (!root) {
         return NGX_ERROR;
     }
 
     /* Extract issuer (REQUIRED claim) */
-    value = ngx_oidc_json_object_get(root, "iss");
-    if (ngx_oidc_json_is_string(value)) {
-        string_value = ngx_oidc_json_string(value);
-        size_t len = ngx_strlen(string_value);
-        claims->issuer = ngx_pcalloc(pool, len + 1);
+    value = nxe_json_object_get(root, "iss");
+    if (nxe_json_is_string(value)
+        && nxe_json_string(value, &str_value) == NGX_OK)
+    {
+        claims->issuer = ngx_pcalloc(pool, str_value.len + 1);
         if (claims->issuer == NULL) {
             ngx_log_error(NGX_LOG_ERR, pool->log, 0,
                           "oidc_jwt: failed to allocate memory "
                           "for issuer claim");
-            ngx_oidc_json_free(root);
+            nxe_json_free(root);
             return NGX_ERROR;
         }
-        ngx_memcpy(claims->issuer, string_value, len);
+        ngx_memcpy(claims->issuer, str_value.data, str_value.len);
     } else {
         ngx_log_error(NGX_LOG_ERR, pool->log, 0,
                       "oidc_jwt: issuer claim is missing or invalid");
-        ngx_oidc_json_free(root);
+        nxe_json_free(root);
         return NGX_ERROR;
     }
 
     /* Extract audience (REQUIRED claim) */
-    value = ngx_oidc_json_object_get(root, "aud");
-    if (ngx_oidc_json_is_string(value)) {
-        string_value = ngx_oidc_json_string(value);
-        size_t len = ngx_strlen(string_value);
-        claims->audience = ngx_pcalloc(pool, len + 1);
+    value = nxe_json_object_get(root, "aud");
+    if (nxe_json_is_string(value)
+        && nxe_json_string(value, &str_value) == NGX_OK)
+    {
+        claims->audience = ngx_pcalloc(pool, str_value.len + 1);
         if (claims->audience == NULL) {
             ngx_log_error(NGX_LOG_ERR, pool->log, 0,
                           "oidc_jwt: failed to allocate memory "
                           "for audience claim");
-            ngx_oidc_json_free(root);
+            nxe_json_free(root);
             return NGX_ERROR;
         }
-        ngx_memcpy(claims->audience, string_value, len);
+        ngx_memcpy(claims->audience, str_value.data, str_value.len);
 
         /* Single audience: store as array with one element */
         claims->audiences = ngx_pcalloc(pool, sizeof(char *) * 2);
         if (claims->audiences == NULL) {
-            ngx_oidc_json_free(root);
+            nxe_json_free(root);
             return NGX_ERROR;
         }
         claims->audiences[0] = claims->audience;
         claims->audiences[1] = NULL;
         claims->audience_count = 1;
 
-    } else if (ngx_oidc_json_is_array(value)
-               && ngx_oidc_json_array_size(value) > 0)
+    } else if (nxe_json_is_array(value)
+               && nxe_json_array_size(value) > 0)
     {
-        size_t aud_count = ngx_oidc_json_array_size(value);
+        size_t aud_count = nxe_json_array_size(value);
         size_t i;
 
         claims->audiences = ngx_pcalloc(pool,
                                         sizeof(char *) * (aud_count + 1));
         if (claims->audiences == NULL) {
-            ngx_oidc_json_free(root);
+            nxe_json_free(root);
             return NGX_ERROR;
         }
         claims->audience_count = aud_count;
 
         for (i = 0; i < aud_count; i++) {
-            ngx_oidc_json_t *aud_elem = ngx_oidc_json_array_get(value, i);
-            if (!ngx_oidc_json_is_string(aud_elem)) {
+            nxe_json_t *aud_elem = nxe_json_array_get(value, i);
+            if (!nxe_json_is_string(aud_elem)
+                || nxe_json_string(aud_elem, &str_value) != NGX_OK)
+            {
                 ngx_log_error(NGX_LOG_ERR, pool->log, 0,
                               "oidc_jwt: audience claim array element "
                               "at index %uz is not a string", i);
-                ngx_oidc_json_free(root);
+                nxe_json_free(root);
                 return NGX_ERROR;
             }
-            string_value = ngx_oidc_json_string(aud_elem);
-            size_t len = ngx_strlen(string_value);
-            claims->audiences[i] = ngx_pcalloc(pool, len + 1);
+            claims->audiences[i] = ngx_pcalloc(pool, str_value.len + 1);
             if (claims->audiences[i] == NULL) {
-                ngx_oidc_json_free(root);
+                nxe_json_free(root);
                 return NGX_ERROR;
             }
-            ngx_memcpy(claims->audiences[i], string_value, len);
+            ngx_memcpy(claims->audiences[i], str_value.data, str_value.len);
         }
         claims->audiences[aud_count] = NULL;
 
@@ -364,28 +369,28 @@ jwt_parse_claims(const char *payload_json, jwt_claims_t *claims,
     } else {
         ngx_log_error(NGX_LOG_ERR, pool->log, 0,
                       "oidc_jwt: audience claim is missing or invalid");
-        ngx_oidc_json_free(root);
+        nxe_json_free(root);
         return NGX_ERROR;
     }
 
     /* Extract subject (REQUIRED claim) */
-    value = ngx_oidc_json_object_get(root, "sub");
-    if (ngx_oidc_json_is_string(value)) {
-        string_value = ngx_oidc_json_string(value);
-        size_t len = ngx_strlen(string_value);
-        claims->subject = ngx_pcalloc(pool, len + 1);
+    value = nxe_json_object_get(root, "sub");
+    if (nxe_json_is_string(value)
+        && nxe_json_string(value, &str_value) == NGX_OK)
+    {
+        claims->subject = ngx_pcalloc(pool, str_value.len + 1);
         if (claims->subject == NULL) {
             ngx_log_error(NGX_LOG_ERR, pool->log, 0,
                           "oidc_jwt: failed to allocate memory "
                           "for subject claim");
-            ngx_oidc_json_free(root);
+            nxe_json_free(root);
             return NGX_ERROR;
         }
-        ngx_memcpy(claims->subject, string_value, len);
+        ngx_memcpy(claims->subject, str_value.data, str_value.len);
     } else {
         ngx_log_error(NGX_LOG_ERR, pool->log, 0,
                       "oidc_jwt: subject claim is missing or invalid");
-        ngx_oidc_json_free(root);
+        nxe_json_free(root);
         return NGX_ERROR;
     }
 
@@ -393,7 +398,7 @@ jwt_parse_claims(const char *payload_json, jwt_claims_t *claims,
     if (jwt_get_time_claim(root, "exp", &claims->expiration, 1, pool)
         != NGX_OK)
     {
-        ngx_oidc_json_free(root);
+        nxe_json_free(root);
         return NGX_ERROR;
     }
 
@@ -401,7 +406,7 @@ jwt_parse_claims(const char *payload_json, jwt_claims_t *claims,
     if (jwt_get_time_claim(root, "iat", &claims->issued_at, 1, pool)
         != NGX_OK)
     {
-        ngx_oidc_json_free(root);
+        nxe_json_free(root);
         return NGX_ERROR;
     }
 
@@ -409,13 +414,13 @@ jwt_parse_claims(const char *payload_json, jwt_claims_t *claims,
     jwt_get_time_claim(root, "nbf", &claims->not_before, 0, pool);
 
     /* Extract nonce (OPTIONAL claim, but may be required by validation) */
-    value = ngx_oidc_json_object_get(root, "nonce");
-    if (ngx_oidc_json_is_string(value)) {
-        string_value = ngx_oidc_json_string(value);
-        size_t len = ngx_strlen(string_value);
-        claims->nonce = ngx_pcalloc(pool, len + 1);
+    value = nxe_json_object_get(root, "nonce");
+    if (nxe_json_is_string(value)
+        && nxe_json_string(value, &str_value) == NGX_OK)
+    {
+        claims->nonce = ngx_pcalloc(pool, str_value.len + 1);
         if (claims->nonce) {
-            ngx_memcpy(claims->nonce, string_value, len);
+            ngx_memcpy(claims->nonce, str_value.data, str_value.len);
         }
         /* Note: nonce allocation failure is not fatal, validation will catch
          * it if nonce is required */
@@ -425,20 +430,20 @@ jwt_parse_claims(const char *payload_json, jwt_claims_t *claims,
     jwt_get_time_claim(root, "auth_time", &claims->auth_time, 0, pool);
 
     /* Extract at_hash (OPTIONAL claim) */
-    value = ngx_oidc_json_object_get(root, "at_hash");
-    if (ngx_oidc_json_is_string(value)) {
-        string_value = ngx_oidc_json_string(value);
-        size_t len = ngx_strlen(string_value);
-        claims->at_hash = ngx_pcalloc(pool, len + 1);
+    value = nxe_json_object_get(root, "at_hash");
+    if (nxe_json_is_string(value)
+        && nxe_json_string(value, &str_value) == NGX_OK)
+    {
+        claims->at_hash = ngx_pcalloc(pool, str_value.len + 1);
         if (claims->at_hash == NULL) {
             ngx_log_error(NGX_LOG_ERR, ngx_cycle->log, 0,
                           "oidc_jwt: failed to allocate at_hash");
         } else {
-            ngx_memcpy(claims->at_hash, string_value, len);
+            ngx_memcpy(claims->at_hash, str_value.data, str_value.len);
         }
     }
 
-    ngx_oidc_json_free(root);
+    nxe_json_free(root);
 
     return NGX_OK;
 }
@@ -616,18 +621,24 @@ jwt_validate_claims(ngx_http_request_t *r, const jwt_claims_t *claims,
     {
         /* Extract algorithm from JWT header */
         ngx_str_t header;
-        ngx_oidc_json_t *header_json, *alg_value;
-        const char *algorithm = NULL;
+        nxe_json_t *header_json, *alg_value;
+        ngx_str_t alg_str;
+        char *algorithm = NULL;
 
         if (ngx_oidc_jwt_decode_header(params->token, &header, r->pool)
             == NGX_OK)
         {
             /* Parse header JSON */
-            header_json = ngx_oidc_json_parse(&header, r->pool);
+            header_json = nxe_json_parse(&header, r->pool);
             if (header_json) {
-                alg_value = ngx_oidc_json_object_get(header_json, "alg");
-                if (ngx_oidc_json_is_string(alg_value)) {
-                    algorithm = ngx_oidc_json_string(alg_value);
+                alg_value = nxe_json_object_get(header_json, "alg");
+                if (nxe_json_is_string(alg_value)
+                    && nxe_json_string(alg_value, &alg_str) == NGX_OK)
+                {
+                    algorithm = ngx_pcalloc(r->pool, alg_str.len + 1);
+                    if (algorithm) {
+                        ngx_memcpy(algorithm, alg_str.data, alg_str.len);
+                    }
                 }
 
                 if (algorithm) {
@@ -637,12 +648,12 @@ jwt_validate_claims(ngx_http_request_t *r, const jwt_claims_t *claims,
                                                       params->access_token)
                         != NGX_OK)
                     {
-                        ngx_oidc_json_free(header_json);
+                        nxe_json_free(header_json);
                         return JWT_ERR_SIGNATURE_FAILED;
                     }
                 }
 
-                ngx_oidc_json_free(header_json);
+                nxe_json_free(header_json);
             }
         }
 
@@ -1142,9 +1153,10 @@ jwt_verify_signature(ngx_http_request_t *r, ngx_str_t *token,
     u_char *dot1, *dot2, *header_payload_end;
     ngx_str_t header_b64, signature_b64;
     ngx_str_t header_decoded, signature_decoded;
-    ngx_oidc_json_t *header_json = NULL;
-    ngx_oidc_json_t *alg_value = NULL, *kid_value = NULL;
-    const char *algorithm = NULL, *kid_str = NULL;
+    nxe_json_t *header_json = NULL;
+    nxe_json_t *alg_value = NULL, *kid_value = NULL;
+    ngx_str_t alg_str_val, kid_str_val;
+    char *algorithm = NULL, *kid_str = NULL;
     u_char *header_payload_buf = NULL;
     size_t header_payload_len;
     jwt_signature_verify_ctx_t verify_ctx;
@@ -1215,7 +1227,7 @@ jwt_verify_signature(ngx_http_request_t *r, ngx_str_t *token,
     /* Parse header JSON */
     header_decoded.data[header_decoded.len] = '\0';
     ngx_str_t header_json_str = { header_decoded.len, header_decoded.data };
-    header_json = ngx_oidc_json_parse(&header_json_str, pool);
+    header_json = nxe_json_parse(&header_json_str, pool);
     if (!header_json) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_jwt: Failed to parse JWT header JSON");
@@ -1223,32 +1235,40 @@ jwt_verify_signature(ngx_http_request_t *r, ngx_str_t *token,
     }
 
     /* Get algorithm */
-    alg_value = ngx_oidc_json_object_get(header_json, "alg");
-    if (!ngx_oidc_json_is_string(alg_value)) {
+    alg_value = nxe_json_object_get(header_json, "alg");
+    if (!nxe_json_is_string(alg_value)
+        || nxe_json_string(alg_value, &alg_str_val) != NGX_OK)
+    {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_jwt: Missing or invalid 'alg' in JWT header");
-        ngx_oidc_json_free(header_json);
+        nxe_json_free(header_json);
         return NGX_ERROR;
     }
 
-    algorithm = ngx_oidc_json_string(alg_value);
+    algorithm = ngx_pcalloc(pool, alg_str_val.len + 1);
     if (!algorithm) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                      "oidc_jwt: Failed to get algorithm from JWT header");
-        ngx_oidc_json_free(header_json);
+                      "oidc_jwt: Failed to allocate algorithm buffer");
+        nxe_json_free(header_json);
         return NGX_ERROR;
     }
+    ngx_memcpy(algorithm, alg_str_val.data, alg_str_val.len);
 
     /* Validate algorithm against whitelist */
     if (ngx_oidc_jwt_validate_algorithm(r, algorithm) != NGX_OK) {
-        ngx_oidc_json_free(header_json);
+        nxe_json_free(header_json);
         return NGX_ERROR;
     }
 
     /* Get kid (optional) */
-    kid_value = ngx_oidc_json_object_get(header_json, "kid");
-    if (ngx_oidc_json_is_string(kid_value)) {
-        kid_str = ngx_oidc_json_string(kid_value);
+    kid_value = nxe_json_object_get(header_json, "kid");
+    if (nxe_json_is_string(kid_value)
+        && nxe_json_string(kid_value, &kid_str_val) == NGX_OK)
+    {
+        kid_str = ngx_pcalloc(pool, kid_str_val.len + 1);
+        if (kid_str) {
+            ngx_memcpy(kid_str, kid_str_val.data, kid_str_val.len);
+        }
     }
 
     ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
@@ -1265,7 +1285,7 @@ jwt_verify_signature(ngx_http_request_t *r, ngx_str_t *token,
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_jwt: Failed to allocate memory for header.payload "
                       "(%uz bytes)", header_payload_len);
-        ngx_oidc_json_free(header_json);
+        nxe_json_free(header_json);
         return NGX_ERROR;
     }
 
@@ -1278,14 +1298,14 @@ jwt_verify_signature(ngx_http_request_t *r, ngx_str_t *token,
     if (signature_decoded.data == NULL) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_jwt: Failed to allocate memory for signature");
-        ngx_oidc_json_free(header_json);
+        nxe_json_free(header_json);
         return NGX_ERROR;
     }
 
     if (ngx_decode_base64url(&signature_decoded, &signature_b64) != NGX_OK) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_jwt: Failed to decode JWT signature");
-        ngx_oidc_json_free(header_json);
+        nxe_json_free(header_json);
         return NGX_ERROR;
     }
 
@@ -1304,7 +1324,7 @@ jwt_verify_signature(ngx_http_request_t *r, ngx_str_t *token,
     rc = ngx_oidc_jwks_iterate_keys(r, jwks, jwt_verify_key_callback,
                                     &verify_ctx);
 
-    ngx_oidc_json_free(header_json);
+    nxe_json_free(header_json);
 
     /* Internal error during iteration: propagate immediately */
     if (rc == NGX_ERROR) {

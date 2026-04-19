@@ -13,7 +13,7 @@
 #include <openssl/err.h>
 #include "ngx_oidc_jwks.h"
 #include "ngx_oidc_http.h"
-#include "ngx_oidc_json.h"
+#include "nxe_json.h"
 
 /** JWKS shared memory node (stores JSON strings only) */
 typedef struct {
@@ -124,23 +124,25 @@ jwks_cache_node_cleanup(void *data)
  * Helper: check if a JWK has a string field with specific value
  */
 static ngx_flag_t
-jwks_has_string_value(ngx_oidc_json_t *jwk, const char *key,
+jwks_has_string_value(nxe_json_t *jwk, const char *key,
     const char *expected)
 {
-    ngx_oidc_json_t *val;
-    const char *str;
+    nxe_json_t *val;
+    ngx_str_t str;
+    size_t expected_len;
 
-    val = ngx_oidc_json_object_get(jwk, key);
-    if (!ngx_oidc_json_is_string(val)) {
+    val = nxe_json_object_get(jwk, key);
+    if (!nxe_json_is_string(val)) {
         return 0;
     }
 
-    str = ngx_oidc_json_string(val);
-    if (str == NULL) {
+    if (nxe_json_string(val, &str) != NGX_OK) {
         return 0;
     }
 
-    return (ngx_strcmp(str, expected) == 0);
+    expected_len = ngx_strlen(expected);
+    return (str.len == expected_len
+            && ngx_memcmp(str.data, expected, expected_len) == 0);
 }
 
 /**
@@ -156,9 +158,9 @@ jwks_has_string_value(ngx_oidc_json_t *jwk, const char *key,
  * @return EVP_PKEY on success, NULL on failure
  */
 static EVP_PKEY *
-jwks_create_rsa_key(ngx_http_request_t *r, ngx_oidc_json_t *jwk)
+jwks_create_rsa_key(ngx_http_request_t *r, nxe_json_t *jwk)
 {
-    ngx_oidc_json_t *n_value, *e_value;
+    nxe_json_t *n_value, *e_value;
     ngx_str_t n_str, e_str, n_decoded, e_decoded;
     EVP_PKEY *pkey = NULL;
     EVP_PKEY_CTX *pctx = NULL;
@@ -174,9 +176,9 @@ jwks_create_rsa_key(ngx_http_request_t *r, ngx_oidc_json_t *jwk)
                    "oidc_jwks: creating RSA public key from JWK");
 
     /* Extract 'n' (modulus) from JWK */
-    n_value = ngx_oidc_json_object_get(jwk, "n");
+    n_value = nxe_json_object_get(jwk, "n");
     if (n_value == NULL
-        || ngx_oidc_json_type(n_value) != NGX_OIDC_JSON_STRING)
+        || nxe_json_type(n_value) != NXE_JSON_STRING)
     {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_jwks: missing or invalid 'n' parameter in JWK");
@@ -184,9 +186,9 @@ jwks_create_rsa_key(ngx_http_request_t *r, ngx_oidc_json_t *jwk)
     }
 
     /* Extract 'e' (public exponent) from JWK */
-    e_value = ngx_oidc_json_object_get(jwk, "e");
+    e_value = nxe_json_object_get(jwk, "e");
     if (e_value == NULL
-        || ngx_oidc_json_type(e_value) != NGX_OIDC_JSON_STRING)
+        || nxe_json_type(e_value) != NXE_JSON_STRING)
     {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_jwks: missing or invalid 'e' parameter in JWK");
@@ -194,13 +196,13 @@ jwks_create_rsa_key(ngx_http_request_t *r, ngx_oidc_json_t *jwk)
     }
 
     /* Get Base64url-encoded strings */
-    if (ngx_oidc_json_object_get_string(jwk, "n", &n_str, r->pool) != NGX_OK) {
+    if (nxe_json_object_get_string(jwk, "n", &n_str, r->pool) != NGX_OK) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_jwks: failed to get 'n' string value");
         return NULL;
     }
 
-    if (ngx_oidc_json_object_get_string(jwk, "e", &e_str, r->pool) != NGX_OK) {
+    if (nxe_json_object_get_string(jwk, "e", &e_str, r->pool) != NGX_OK) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_jwks: failed to get 'e' string value");
         return NULL;
@@ -362,9 +364,9 @@ cleanup:
  * Supports P-256, P-384, P-521 curves
  */
 static EVP_PKEY *
-jwks_create_ec_key(ngx_http_request_t *r, ngx_oidc_json_t *jwk)
+jwks_create_ec_key(ngx_http_request_t *r, nxe_json_t *jwk)
 {
-    ngx_oidc_json_t *crv_value, *x_value, *y_value;
+    nxe_json_t *crv_value, *x_value, *y_value;
     ngx_str_t crv_str, x_str, y_str, x_decoded, y_decoded;
     EVP_PKEY *pkey = NULL;
     EVP_PKEY_CTX *pctx = NULL;
@@ -382,9 +384,9 @@ jwks_create_ec_key(ngx_http_request_t *r, ngx_oidc_json_t *jwk)
                    "oidc_jwks: creating EC public key from JWK");
 
     /* Extract 'crv' (curve) from JWK */
-    crv_value = ngx_oidc_json_object_get(jwk, "crv");
+    crv_value = nxe_json_object_get(jwk, "crv");
     if (crv_value == NULL
-        || ngx_oidc_json_type(crv_value) != NGX_OIDC_JSON_STRING)
+        || nxe_json_type(crv_value) != NXE_JSON_STRING)
     {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_jwks: missing or invalid 'crv' parameter in JWK");
@@ -392,9 +394,9 @@ jwks_create_ec_key(ngx_http_request_t *r, ngx_oidc_json_t *jwk)
     }
 
     /* Extract 'x' coordinate from JWK */
-    x_value = ngx_oidc_json_object_get(jwk, "x");
+    x_value = nxe_json_object_get(jwk, "x");
     if (x_value == NULL
-        || ngx_oidc_json_type(x_value) != NGX_OIDC_JSON_STRING)
+        || nxe_json_type(x_value) != NXE_JSON_STRING)
     {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_jwks: missing or invalid 'x' parameter in JWK");
@@ -402,9 +404,9 @@ jwks_create_ec_key(ngx_http_request_t *r, ngx_oidc_json_t *jwk)
     }
 
     /* Extract 'y' coordinate from JWK */
-    y_value = ngx_oidc_json_object_get(jwk, "y");
+    y_value = nxe_json_object_get(jwk, "y");
     if (y_value == NULL
-        || ngx_oidc_json_type(y_value) != NGX_OIDC_JSON_STRING)
+        || nxe_json_type(y_value) != NXE_JSON_STRING)
     {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_jwks: missing or invalid 'y' parameter in JWK");
@@ -412,7 +414,7 @@ jwks_create_ec_key(ngx_http_request_t *r, ngx_oidc_json_t *jwk)
     }
 
     /* Get curve name */
-    if (ngx_oidc_json_object_get_string(jwk, "crv", &crv_str, r->pool)
+    if (nxe_json_object_get_string(jwk, "crv", &crv_str, r->pool)
         != NGX_OK)
     {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
@@ -447,13 +449,13 @@ jwks_create_ec_key(ngx_http_request_t *r, ngx_oidc_json_t *jwk)
                    "oidc_jwks: EC curve: %s", group_name);
 
     /* Get x and y coordinates */
-    if (ngx_oidc_json_object_get_string(jwk, "x", &x_str, r->pool) != NGX_OK) {
+    if (nxe_json_object_get_string(jwk, "x", &x_str, r->pool) != NGX_OK) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_jwks: failed to get 'x' string value");
         return NULL;
     }
 
-    if (ngx_oidc_json_object_get_string(jwk, "y", &y_str, r->pool) != NGX_OK) {
+    if (nxe_json_object_get_string(jwk, "y", &y_str, r->pool) != NGX_OK) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_jwks: failed to get 'y' string value");
         return NULL;
@@ -630,9 +632,9 @@ cleanup:
  * Create EdDSA (Ed25519) public key from JWK
  */
 static EVP_PKEY *
-jwks_create_okp_key(ngx_http_request_t *r, ngx_oidc_json_t *jwk)
+jwks_create_okp_key(ngx_http_request_t *r, nxe_json_t *jwk)
 {
-    ngx_oidc_json_t *crv_value, *x_value;
+    nxe_json_t *crv_value, *x_value;
     ngx_str_t crv_str, x_str, x_decoded;
     EVP_PKEY *pkey = NULL;
     EVP_PKEY_CTX *pctx = NULL;
@@ -647,9 +649,9 @@ jwks_create_okp_key(ngx_http_request_t *r, ngx_oidc_json_t *jwk)
                    "oidc_jwks: creating EdDSA public key from JWK");
 
     /* Extract 'crv' (curve) from JWK */
-    crv_value = ngx_oidc_json_object_get(jwk, "crv");
+    crv_value = nxe_json_object_get(jwk, "crv");
     if (crv_value == NULL
-        || ngx_oidc_json_type(crv_value) != NGX_OIDC_JSON_STRING)
+        || nxe_json_type(crv_value) != NXE_JSON_STRING)
     {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_jwks: missing or invalid 'crv' parameter in JWK");
@@ -657,9 +659,9 @@ jwks_create_okp_key(ngx_http_request_t *r, ngx_oidc_json_t *jwk)
     }
 
     /* Extract 'x' (public key) from JWK */
-    x_value = ngx_oidc_json_object_get(jwk, "x");
+    x_value = nxe_json_object_get(jwk, "x");
     if (x_value == NULL
-        || ngx_oidc_json_type(x_value) != NGX_OIDC_JSON_STRING)
+        || nxe_json_type(x_value) != NXE_JSON_STRING)
     {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_jwks: missing or invalid 'x' parameter in JWK");
@@ -667,7 +669,7 @@ jwks_create_okp_key(ngx_http_request_t *r, ngx_oidc_json_t *jwk)
     }
 
     /* Get curve name */
-    if (ngx_oidc_json_object_get_string(jwk, "crv", &crv_str, r->pool)
+    if (nxe_json_object_get_string(jwk, "crv", &crv_str, r->pool)
         != NGX_OK)
     {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
@@ -691,7 +693,7 @@ jwks_create_okp_key(ngx_http_request_t *r, ngx_oidc_json_t *jwk)
                    "oidc_jwks: using %V curve", &crv_str);
 
     /* Get public key data */
-    if (ngx_oidc_json_object_get_string(jwk, "x", &x_str, r->pool) != NGX_OK) {
+    if (nxe_json_object_get_string(jwk, "x", &x_str, r->pool) != NGX_OK) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_jwks: failed to get 'x' string value");
         return NULL;
@@ -807,7 +809,7 @@ static ngx_int_t
 jwks_parse_json_to_cache(ngx_http_request_t *r, ngx_str_t *jwks_json,
     ngx_oidc_jwks_cache_node_t **cache_node)
 {
-    ngx_oidc_json_t *root, *keys_array, *jwk;
+    nxe_json_t *root, *keys_array, *jwk;
     ngx_oidc_jwks_key_t *key;
     ngx_oidc_jwks_cache_node_t *node;
     ngx_str_t kty_str, kid_str, alg_str;
@@ -835,7 +837,7 @@ jwks_parse_json_to_cache(ngx_http_request_t *r, ngx_str_t *jwks_json,
     }
 
     /* Parse JSON from external JWKS endpoint (untrusted source) */
-    root = ngx_oidc_json_parse_untrusted(jwks_json, r->pool);
+    root = nxe_json_parse_untrusted(jwks_json, r->pool);
     if (root == NULL) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_jwks: failed to parse JWKS JSON");
@@ -843,17 +845,17 @@ jwks_parse_json_to_cache(ngx_http_request_t *r, ngx_str_t *jwks_json,
     }
 
     /* Get "keys" array */
-    keys_array = ngx_oidc_json_object_get(root, "keys");
+    keys_array = nxe_json_object_get(root, "keys");
     if (keys_array == NULL
-        || ngx_oidc_json_type(keys_array) != NGX_OIDC_JSON_ARRAY)
+        || nxe_json_type(keys_array) != NXE_JSON_ARRAY)
     {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_jwks: missing or invalid 'keys' array in JWKS");
-        ngx_oidc_json_free(root);
+        nxe_json_free(root);
         return NGX_ERROR;
     }
 
-    array_size = ngx_oidc_json_array_size(keys_array);
+    array_size = nxe_json_array_size(keys_array);
 
     if (array_size > NGX_OIDC_MAX_JWKS_KEYS) {
         ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
@@ -870,11 +872,11 @@ jwks_parse_json_to_cache(ngx_http_request_t *r, ngx_str_t *jwks_json,
         node->keys =
             ngx_array_create(r->pool, 1, sizeof(ngx_oidc_jwks_key_t));
         if (node->keys == NULL) {
-            ngx_oidc_json_free(root);
+            nxe_json_free(root);
             return NGX_ERROR;
         }
 
-        ngx_oidc_json_free(root);
+        nxe_json_free(root);
         *cache_node = node;
         return NGX_OK;
     }
@@ -888,7 +890,7 @@ jwks_parse_json_to_cache(ngx_http_request_t *r, ngx_str_t *jwks_json,
     if (node->keys == NULL) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_jwks: failed to create keys array");
-        ngx_oidc_json_free(root);
+        nxe_json_free(root);
         return NGX_ERROR;
     }
 
@@ -898,7 +900,7 @@ jwks_parse_json_to_cache(ngx_http_request_t *r, ngx_str_t *jwks_json,
     if (cln == NULL) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_jwks: failed to register cleanup handler");
-        ngx_oidc_json_free(root);
+        nxe_json_free(root);
         return NGX_ERROR;
     }
 
@@ -909,9 +911,9 @@ jwks_parse_json_to_cache(ngx_http_request_t *r, ngx_str_t *jwks_json,
 
     /* Iterate over keys */
     for (i = 0; i < array_size; i++) {
-        jwk = ngx_oidc_json_array_get(keys_array, i);
+        jwk = nxe_json_array_get(keys_array, i);
         if (jwk == NULL
-            || ngx_oidc_json_type(jwk) != NGX_OIDC_JSON_OBJECT)
+            || nxe_json_type(jwk) != NXE_JSON_OBJECT)
         {
             ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
                           "oidc_jwks: invalid JWK at index %uz, skipping", i);
@@ -927,7 +929,7 @@ jwks_parse_json_to_cache(ngx_http_request_t *r, ngx_str_t *jwks_json,
         }
 
         /* Get kty (key type) */
-        if (ngx_oidc_json_object_get_string(jwk, "kty", &kty_str, r->pool)
+        if (nxe_json_object_get_string(jwk, "kty", &kty_str, r->pool)
             != NGX_OK)
         {
             ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
@@ -971,7 +973,7 @@ jwks_parse_json_to_cache(ngx_http_request_t *r, ngx_str_t *jwks_json,
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                           "oidc_jwks: failed to push key to array");
             EVP_PKEY_free(pkey);
-            ngx_oidc_json_free(root);
+            nxe_json_free(root);
             return NGX_ERROR;
         }
 
@@ -993,7 +995,7 @@ jwks_parse_json_to_cache(ngx_http_request_t *r, ngx_str_t *jwks_json,
         }
 
         /* Get kid (key ID) - optional */
-        if (ngx_oidc_json_object_get_string(jwk, "kid", &kid_str, r->pool)
+        if (nxe_json_object_get_string(jwk, "kid", &kid_str, r->pool)
             == NGX_OK)
         {
             key->kid = kid_str;
@@ -1002,7 +1004,7 @@ jwks_parse_json_to_cache(ngx_http_request_t *r, ngx_str_t *jwks_json,
         }
 
         /* Get alg (algorithm) - optional */
-        if (ngx_oidc_json_object_get_string(jwk, "alg", &alg_str, r->pool)
+        if (nxe_json_object_get_string(jwk, "alg", &alg_str, r->pool)
             == NGX_OK)
         {
             key->alg = alg_str;
@@ -1013,7 +1015,7 @@ jwks_parse_json_to_cache(ngx_http_request_t *r, ngx_str_t *jwks_json,
         /* Get crv for EC keys (used for alg-curve validation) */
         if (key->kty == NGX_OIDC_JWK_EC) {
             ngx_str_t crv_str;
-            if (ngx_oidc_json_object_get_string(jwk, "crv", &crv_str, r->pool)
+            if (nxe_json_object_get_string(jwk, "crv", &crv_str, r->pool)
                 == NGX_OK)
             {
                 key->crv = crv_str;
@@ -1038,7 +1040,7 @@ jwks_parse_json_to_cache(ngx_http_request_t *r, ngx_str_t *jwks_json,
     ngx_oidc_jwks_cache_node_set_fetched_at(node, now);
     ngx_oidc_jwks_cache_node_set_expires_at(node, now + 3600); /* 1 hour TTL */
 
-    ngx_oidc_json_free(root);
+    nxe_json_free(root);
 
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                    "oidc_jwks: successfully parsed %uz keys",

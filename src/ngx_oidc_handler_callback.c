@@ -69,7 +69,7 @@ callback_token_done(ngx_http_request_t *r, void *data, ngx_int_t rc)
     ngx_http_request_t *main_r;
     ngx_str_t body, access_token, id_token, token_type;
     ngx_str_t *session_id;
-    ngx_oidc_json_t *root = NULL;
+    nxe_json_t *root = NULL;
     time_t expires;
 
     /* Validate context */
@@ -129,7 +129,7 @@ callback_token_done(ngx_http_request_t *r, void *data, ngx_int_t rc)
     }
 
     /* Parse JSON from token endpoint (untrusted external source) */
-    root = ngx_oidc_json_parse_untrusted(&body, r->pool);
+    root = nxe_json_parse_untrusted(&body, r->pool);
     if (!root) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_handler_callback: failed to parse token "
@@ -138,19 +138,19 @@ callback_token_done(ngx_http_request_t *r, void *data, ngx_int_t rc)
     }
 
     /* Extract access_token using subrequest pool */
-    if (ngx_oidc_json_object_get_string(root, "access_token", &access_token,
+    if (nxe_json_object_get_string(root, "access_token", &access_token,
                                         r->pool)
         != NGX_OK)
     {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_handler_callback: access_token not found "
                       "in token response");
-        ngx_oidc_json_free(root);
+        nxe_json_free(root);
         return NGX_ERROR;
     }
 
     /* Extract token_type (optional) using subrequest pool */
-    if (ngx_oidc_json_object_get_string(root, "token_type", &token_type,
+    if (nxe_json_object_get_string(root, "token_type", &token_type,
                                         r->pool)
         != NGX_OK)
     {
@@ -166,7 +166,7 @@ callback_token_done(ngx_http_request_t *r, void *data, ngx_int_t rc)
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_handler_callback: session expiration time "
                       "overflow");
-        ngx_oidc_json_free(root);
+        nxe_json_free(root);
         return NGX_ERROR;
     }
     expires = now + provider->session_timeout;
@@ -185,7 +185,7 @@ callback_token_done(ngx_http_request_t *r, void *data, ngx_int_t rc)
     }
 
     /* Extract id_token (optional for OIDC) */
-    if (ngx_oidc_json_object_get_string(root, "id_token", &id_token,
+    if (nxe_json_object_get_string(root, "id_token", &id_token,
                                         r->pool)
         != NGX_OK)
     {
@@ -213,7 +213,7 @@ callback_token_done(ngx_http_request_t *r, void *data, ngx_int_t rc)
         }
     }
 
-    ngx_oidc_json_free(root);
+    nxe_json_free(root);
 
     ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                    "oidc_handler_callback: successfully exchanged code "
@@ -500,8 +500,7 @@ callback_extract_and_validate_nonce(ngx_http_request_t *r,
     ngx_str_t *session_id)
 {
     ngx_str_t id_token_payload;
-    ngx_oidc_json_t *payload_json = NULL, *nonce_json = NULL;
-    const char *nonce_str = NULL;
+    nxe_json_t *payload_json = NULL, *nonce_json = NULL;
     ngx_str_t nonce_value, stored_nonce;
     ngx_str_t *expected_nonce;
 
@@ -513,27 +512,23 @@ callback_extract_and_validate_nonce(ngx_http_request_t *r,
     }
 
     /* Parse JSON payload */
-    payload_json = ngx_oidc_json_parse(&id_token_payload, r->pool);
+    payload_json = nxe_json_parse(&id_token_payload, r->pool);
     if (payload_json == NULL) {
         return NULL;
     }
 
     /* Get nonce from payload */
-    nonce_json = ngx_oidc_json_object_get(payload_json, "nonce");
-    if (!ngx_oidc_json_is_string(nonce_json)) {
-        ngx_oidc_json_free(payload_json);
+    nonce_json = nxe_json_object_get(payload_json, "nonce");
+    if (!nxe_json_is_string(nonce_json)) {
+        nxe_json_free(payload_json);
         return NULL;
     }
 
-    nonce_str = ngx_oidc_json_string(nonce_json);
-    if (nonce_str == NULL) {
-        ngx_oidc_json_free(payload_json);
+    /* Setup nonce value (binary-safe, borrowed until payload_json free) */
+    if (nxe_json_string(nonce_json, &nonce_value) != NGX_OK) {
+        nxe_json_free(payload_json);
         return NULL;
     }
-
-    /* Setup nonce value */
-    nonce_value.data = (u_char *) nonce_str;
-    nonce_value.len = ngx_strlen(nonce_str);
 
     /* Load stored nonce from session */
     if (ngx_oidc_session_get_nonce(r, provider->session_store, session_id,
@@ -543,7 +538,7 @@ callback_extract_and_validate_nonce(ngx_http_request_t *r,
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_handler_callback: nonce not found or expired "
                       "in session store");
-        ngx_oidc_json_free(payload_json);
+        nxe_json_free(payload_json);
         return NULL;
     }
 
@@ -560,7 +555,7 @@ callback_extract_and_validate_nonce(ngx_http_request_t *r,
                       ? "shared memory"
                       : "redis",
                       stored_nonce.len, nonce_value.len, session_id);
-        ngx_oidc_json_free(payload_json);
+        nxe_json_free(payload_json);
         return NULL;
     }
 
@@ -569,7 +564,7 @@ callback_extract_and_validate_nonce(ngx_http_request_t *r,
     if (expected_nonce == NULL) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_handler_callback: failed to allocate nonce");
-        ngx_oidc_json_free(payload_json);
+        nxe_json_free(payload_json);
         return NULL;
     }
 
@@ -577,7 +572,7 @@ callback_extract_and_validate_nonce(ngx_http_request_t *r,
     if (expected_nonce->data == NULL) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_handler_callback: failed to allocate nonce data");
-        ngx_oidc_json_free(payload_json);
+        nxe_json_free(payload_json);
         return NULL;
     }
 
@@ -587,24 +582,22 @@ callback_extract_and_validate_nonce(ngx_http_request_t *r,
     /* Delete nonce (one-time use) */
     ngx_oidc_session_delete_nonce(r, provider->session_store, session_id);
 
-    ngx_oidc_json_free(payload_json);
+    nxe_json_free(payload_json);
 
     return expected_nonce;
 }
 
 static char *
-string_copy_to_pool(ngx_pool_t *pool, const char *src,
+string_copy_to_pool(ngx_pool_t *pool, ngx_str_t *src,
     ngx_http_request_t *r, const char *name)
 {
-    size_t len;
     char *copy;
 
-    if (!src) {
+    if (!src || !src->data) {
         return NULL;
     }
 
-    len = ngx_strlen(src);
-    copy = ngx_pnalloc(pool, len + 1);
+    copy = ngx_pnalloc(pool, src->len + 1);
     if (!copy) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_handler_callback: failed to allocate memory for %s",
@@ -612,8 +605,8 @@ string_copy_to_pool(ngx_pool_t *pool, const char *src,
         return NULL;
     }
 
-    ngx_memcpy(copy, src, len);
-    copy[len] = '\0';
+    ngx_memcpy(copy, src->data, src->len);
+    copy[src->len] = '\0';
 
     return copy;
 }
@@ -740,9 +733,8 @@ callback_verify_access_token(ngx_http_request_t *r,
 {
     ngx_str_t *session_id;
     ngx_str_t id_token_value, access_token_value, payload, header;
-    ngx_oidc_json_t *payload_json, *at_hash_json, *header_json, *alg_json;
-    const char *at_hash_str;
-    const char *algorithm_str;
+    nxe_json_t *payload_json, *at_hash_json, *header_json, *alg_json;
+    ngx_str_t at_hash_str, algorithm_str;
     char *at_hash_copy = NULL, *algorithm_copy = NULL;
 
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
@@ -797,7 +789,7 @@ callback_verify_access_token(ngx_http_request_t *r,
     }
 
     /* Parse payload JSON */
-    payload_json = ngx_oidc_json_parse(&payload, r->pool);
+    payload_json = nxe_json_parse(&payload, r->pool);
     if (!payload_json) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_handler_callback: failed to parse ID token "
@@ -806,28 +798,28 @@ callback_verify_access_token(ngx_http_request_t *r,
     }
 
     /* Get at_hash from ID token */
-    at_hash_json = ngx_oidc_json_object_get(payload_json, "at_hash");
-    if (!at_hash_json || !ngx_oidc_json_is_string(at_hash_json)) {
-        ngx_oidc_json_free(payload_json);
+    at_hash_json = nxe_json_object_get(payload_json, "at_hash");
+    if (!at_hash_json || !nxe_json_is_string(at_hash_json)) {
+        nxe_json_free(payload_json);
         ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                        "oidc_handler_callback: no at_hash found in ID token, "
                        "skipping access token validation");
         return NGX_OK; /* No at_hash in ID token, cannot validate */
     }
 
-    at_hash_str = ngx_oidc_json_string(at_hash_json);
-    if (!at_hash_str) {
-        ngx_oidc_json_free(payload_json);
+    if (nxe_json_string(at_hash_json, &at_hash_str) != NGX_OK) {
+        nxe_json_free(payload_json);
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_handler_callback: invalid at_hash value "
                       "in ID token");
         return NGX_ERROR;
     }
 
-    /* Copy at_hash to pool before freeing JSON */
-    at_hash_copy = string_copy_to_pool(r->pool, at_hash_str, r, "at_hash");
+    /* Copy at_hash to pool before freeing JSON (NUL-terminated for
+     * ngx_oidc_jwt_validate_at_hash which takes const char *) */
+    at_hash_copy = string_copy_to_pool(r->pool, &at_hash_str, r, "at_hash");
     if (!at_hash_copy) {
-        ngx_oidc_json_free(payload_json);
+        nxe_json_free(payload_json);
         return NGX_ERROR;
     }
 
@@ -835,23 +827,22 @@ callback_verify_access_token(ngx_http_request_t *r,
     if (ngx_oidc_jwt_decode_header(&id_token_value, &header, r->pool)
         == NGX_OK)
     {
-        header_json = ngx_oidc_json_parse(&header, r->pool);
+        header_json = nxe_json_parse(&header, r->pool);
         if (header_json) {
-            alg_json = ngx_oidc_json_object_get(header_json, "alg");
-            if (alg_json && ngx_oidc_json_is_string(alg_json)) {
-                algorithm_str = ngx_oidc_json_string(alg_json);
-                if (algorithm_str) {
-                    /* Copy algorithm to pool before freeing JSON */
-                    algorithm_copy = string_copy_to_pool(
-                        r->pool, algorithm_str, r, "algorithm");
-                }
+            alg_json = nxe_json_object_get(header_json, "alg");
+            if (alg_json && nxe_json_is_string(alg_json)
+                && nxe_json_string(alg_json, &algorithm_str) == NGX_OK)
+            {
+                /* Copy algorithm to pool before freeing JSON */
+                algorithm_copy = string_copy_to_pool(
+                    r->pool, &algorithm_str, r, "algorithm");
             }
-            ngx_oidc_json_free(header_json);
+            nxe_json_free(header_json);
         }
     }
 
     if (!algorithm_copy) {
-        ngx_oidc_json_free(payload_json);
+        nxe_json_free(payload_json);
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_handler_callback: failed to extract algorithm "
                       "from ID token header");
@@ -863,14 +854,14 @@ callback_verify_access_token(ngx_http_request_t *r,
                                       &access_token_value)
         != NGX_OK)
     {
-        ngx_oidc_json_free(payload_json);
+        nxe_json_free(payload_json);
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_handler_callback: at_hash validation failed "
                       "for access_token");
         return NGX_ERROR;
     }
 
-    ngx_oidc_json_free(payload_json);
+    nxe_json_free(payload_json);
 
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                    "oidc_handler_callback: access_token validated "
@@ -1087,9 +1078,9 @@ callback_userinfo_done(ngx_http_request_t *r, void *data, ngx_int_t rc)
     }
 
     /* Parse UserInfo JSON response using abstraction layer */
-    ngx_oidc_json_t *userinfo_json = NULL;
+    nxe_json_t *userinfo_json = NULL;
 
-    userinfo_json = ngx_oidc_json_parse_untrusted(&body, r->pool);
+    userinfo_json = nxe_json_parse_untrusted(&body, r->pool);
     if (userinfo_json == NULL) {
         ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
                       "oidc_handler_callback: failed to parse UserInfo JSON, "
@@ -1099,11 +1090,11 @@ callback_userinfo_done(ngx_http_request_t *r, void *data, ngx_int_t rc)
         return NGX_OK;
     }
 
-    if (ngx_oidc_json_type(userinfo_json) != NGX_OIDC_JSON_OBJECT) {
+    if (nxe_json_type(userinfo_json) != NXE_JSON_OBJECT) {
         ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
                       "oidc_handler_callback: UserInfo response is not "
                       "a JSON object, continuing without userinfo data");
-        ngx_oidc_json_free(userinfo_json);
+        nxe_json_free(userinfo_json);
         /* Transition to next phase without userinfo data */
         main_ctx->callback.state = NGX_HTTP_OIDC_CALLBACK_STATE_SESSION_SAVE;
         return NGX_OK;
@@ -1112,29 +1103,28 @@ callback_userinfo_done(ngx_http_request_t *r, void *data, ngx_int_t rc)
     /* Validate sub claim (skip for location mode) */
     if (!ctx->skip_sub_validation) {
         /* Extract sub claim from UserInfo */
-        ngx_oidc_json_t *userinfo_sub_json = ngx_oidc_json_object_get(
+        nxe_json_t *userinfo_sub_json = nxe_json_object_get(
             userinfo_json, "sub");
         if (userinfo_sub_json == NULL
-            || !ngx_oidc_json_is_string(userinfo_sub_json))
+            || !nxe_json_is_string(userinfo_sub_json))
         {
             ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
                           "oidc_handler_callback: UserInfo response "
                           "missing 'sub' claim, continuing without "
                           "userinfo data");
-            ngx_oidc_json_free(userinfo_json);
+            nxe_json_free(userinfo_json);
             /* Transition to next phase without userinfo data */
             main_ctx->callback.state
                 = NGX_HTTP_OIDC_CALLBACK_STATE_SESSION_SAVE;
             return NGX_OK;
         }
 
-        const char *userinfo_sub_str
-            = ngx_oidc_json_string(userinfo_sub_json);
-        if (userinfo_sub_str == NULL) {
+        ngx_str_t userinfo_sub_val;
+        if (nxe_json_string(userinfo_sub_json, &userinfo_sub_val) != NGX_OK) {
             ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
                           "oidc_handler_callback: failed to get UserInfo "
                           "sub value, continuing without userinfo data");
-            ngx_oidc_json_free(userinfo_json);
+            nxe_json_free(userinfo_json);
             /* Transition to next phase without userinfo data */
             main_ctx->callback.state
                 = NGX_HTTP_OIDC_CALLBACK_STATE_SESSION_SAVE;
@@ -1142,16 +1132,16 @@ callback_userinfo_done(ngx_http_request_t *r, void *data, ngx_int_t rc)
         }
 
         ngx_str_t userinfo_sub;
-        userinfo_sub.len = ngx_strlen(userinfo_sub_str);
+        userinfo_sub.len = userinfo_sub_val.len;
         userinfo_sub.data = ngx_pnalloc(main_r->pool, userinfo_sub.len);
         if (userinfo_sub.data == NULL) {
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                           "oidc_handler_callback: failed to allocate "
                           "userinfo sub");
-            ngx_oidc_json_free(userinfo_json);
+            nxe_json_free(userinfo_json);
             return NGX_ERROR;
         }
-        ngx_memcpy(userinfo_sub.data, userinfo_sub_str, userinfo_sub.len);
+        ngx_memcpy(userinfo_sub.data, userinfo_sub_val.data, userinfo_sub.len);
 
         /* Get ID token and extract sub claim for comparison */
         ngx_str_t id_token_str;
@@ -1163,7 +1153,7 @@ callback_userinfo_done(ngx_http_request_t *r, void *data, ngx_int_t rc)
                           "oidc_handler_callback: failed to retrieve "
                           "ID token for sub validation, continuing "
                           "without userinfo data");
-            ngx_oidc_json_free(userinfo_json);
+            nxe_json_free(userinfo_json);
             /* Transition to next phase without userinfo data */
             main_ctx->callback.state
                 = NGX_HTTP_OIDC_CALLBACK_STATE_SESSION_SAVE;
@@ -1180,7 +1170,7 @@ callback_userinfo_done(ngx_http_request_t *r, void *data, ngx_int_t rc)
                           "oidc_handler_callback: failed to decode ID "
                           "token for sub validation, continuing without "
                           "userinfo data");
-            ngx_oidc_json_free(userinfo_json);
+            nxe_json_free(userinfo_json);
             /* Transition to next phase without userinfo data */
             main_ctx->callback.state
                 = NGX_HTTP_OIDC_CALLBACK_STATE_SESSION_SAVE;
@@ -1188,14 +1178,14 @@ callback_userinfo_done(ngx_http_request_t *r, void *data, ngx_int_t rc)
         }
 
         /* Parse ID token payload JSON using abstraction layer */
-        ngx_oidc_json_t *id_token_json
-            = ngx_oidc_json_parse(&id_token_payload, main_r->pool);
+        nxe_json_t *id_token_json
+            = nxe_json_parse(&id_token_payload, main_r->pool);
         if (id_token_json == NULL) {
             ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
                           "oidc_handler_callback: failed to parse ID "
                           "token payload JSON, continuing without "
                           "userinfo data");
-            ngx_oidc_json_free(userinfo_json);
+            nxe_json_free(userinfo_json);
             /* Transition to next phase without userinfo data */
             main_ctx->callback.state
                 = NGX_HTTP_OIDC_CALLBACK_STATE_SESSION_SAVE;
@@ -1203,30 +1193,29 @@ callback_userinfo_done(ngx_http_request_t *r, void *data, ngx_int_t rc)
         }
 
         /* Extract sub claim from ID token */
-        ngx_oidc_json_t *id_token_sub_json = ngx_oidc_json_object_get(
+        nxe_json_t *id_token_sub_json = nxe_json_object_get(
             id_token_json, "sub");
         if (id_token_sub_json == NULL
-            || !ngx_oidc_json_is_string(id_token_sub_json))
+            || !nxe_json_is_string(id_token_sub_json))
         {
             ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
                           "oidc_handler_callback: ID token missing sub "
                           "claim, continuing without userinfo data");
-            ngx_oidc_json_free(id_token_json);
-            ngx_oidc_json_free(userinfo_json);
+            nxe_json_free(id_token_json);
+            nxe_json_free(userinfo_json);
             /* Transition to next phase without userinfo data */
             main_ctx->callback.state
                 = NGX_HTTP_OIDC_CALLBACK_STATE_SESSION_SAVE;
             return NGX_OK;
         }
 
-        const char *id_token_sub_str
-            = ngx_oidc_json_string(id_token_sub_json);
-        if (id_token_sub_str == NULL) {
+        ngx_str_t id_token_sub_val;
+        if (nxe_json_string(id_token_sub_json, &id_token_sub_val) != NGX_OK) {
             ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
                           "oidc_handler_callback: failed to get ID token "
                           "sub value, continuing without userinfo data");
-            ngx_oidc_json_free(id_token_json);
-            ngx_oidc_json_free(userinfo_json);
+            nxe_json_free(id_token_json);
+            nxe_json_free(userinfo_json);
             /* Transition to next phase without userinfo data */
             main_ctx->callback.state
                 = NGX_HTTP_OIDC_CALLBACK_STATE_SESSION_SAVE;
@@ -1234,17 +1223,18 @@ callback_userinfo_done(ngx_http_request_t *r, void *data, ngx_int_t rc)
         }
 
         ngx_str_t id_token_sub;
-        id_token_sub.len = ngx_strlen(id_token_sub_str);
+        id_token_sub.len = id_token_sub_val.len;
         id_token_sub.data = ngx_pnalloc(main_r->pool, id_token_sub.len);
         if (id_token_sub.data == NULL) {
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                           "oidc_handler_callback: failed to allocate "
                           "id_token sub");
-            ngx_oidc_json_free(id_token_json);
-            ngx_oidc_json_free(userinfo_json);
+            nxe_json_free(id_token_json);
+            nxe_json_free(userinfo_json);
             return NGX_ERROR;
         }
-        ngx_memcpy(id_token_sub.data, id_token_sub_str, id_token_sub.len);
+        ngx_memcpy(id_token_sub.data, id_token_sub_val.data,
+                   id_token_sub.len);
 
         /* Compare sub claims using constant-time comparison */
         ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
@@ -1259,8 +1249,8 @@ callback_userinfo_done(ngx_http_request_t *r, void *data, ngx_int_t rc)
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                           "oidc_handler_callback: UserInfo sub validation "
                           "failed - sub mismatch");
-            ngx_oidc_json_free(id_token_json);
-            ngx_oidc_json_free(userinfo_json);
+            nxe_json_free(id_token_json);
+            nxe_json_free(userinfo_json);
             return NGX_ERROR;
         }
 
@@ -1268,14 +1258,14 @@ callback_userinfo_done(ngx_http_request_t *r, void *data, ngx_int_t rc)
                        "oidc_handler_callback: UserInfo sub validation "
                        "successful");
 
-        ngx_oidc_json_free(id_token_json);
+        nxe_json_free(id_token_json);
     }
 
     /* Serialize userinfo JSON to compact format (no whitespace)
      * to avoid newlines that would cause issues in HTTP headers */
-    ngx_str_t *compact_body = ngx_oidc_json_stringify_compact(userinfo_json,
-                                                              main_r->pool);
-    ngx_oidc_json_free(userinfo_json);
+    ngx_str_t *compact_body = nxe_json_stringify_compact(userinfo_json,
+                                                         main_r->pool);
+    nxe_json_free(userinfo_json);
 
     if (compact_body == NULL) {
         ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,

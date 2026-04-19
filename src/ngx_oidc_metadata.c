@@ -8,7 +8,7 @@
 #include <ngx_http.h>
 #include "ngx_oidc_metadata.h"
 #include "ngx_oidc_http.h"
-#include "ngx_oidc_json.h"
+#include "nxe_json.h"
 
 /** Metadata cache structure (opaque type) */
 struct ngx_oidc_metadata_cache_s {
@@ -489,14 +489,14 @@ static ngx_int_t
 metadata_parse_json(ngx_http_request_t *r, ngx_str_t *body,
     ngx_oidc_metadata_cache_t *metadata)
 {
-    ngx_oidc_json_t *root;
+    nxe_json_t *root;
 
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                    "oidc_metadata: parsing JSON response, length=%uz",
                    body->len);
 
     /* Parse JSON from external OIDC provider (untrusted source) */
-    root = ngx_oidc_json_parse_untrusted(body, r->pool);
+    root = nxe_json_parse_untrusted(body, r->pool);
     if (root == NULL) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_metadata: failed to parse JSON");
@@ -504,53 +504,53 @@ metadata_parse_json(ngx_http_request_t *r, ngx_str_t *body,
     }
 
     /* Extract issuer */
-    if (ngx_oidc_json_object_get_string(root, "issuer", &metadata->issuer,
-                                        r->pool)
+    if (nxe_json_object_get_string(root, "issuer", &metadata->issuer,
+                                   r->pool)
         != NGX_OK)
     {
         ngx_str_null(&metadata->issuer);
     }
 
     /* Extract authorization_endpoint */
-    if (ngx_oidc_json_object_get_string(root, "authorization_endpoint",
-                                        &metadata->endpoints.authorization,
-                                        r->pool)
+    if (nxe_json_object_get_string(root, "authorization_endpoint",
+                                   &metadata->endpoints.authorization,
+                                   r->pool)
         != NGX_OK)
     {
         ngx_str_null(&metadata->endpoints.authorization);
     }
 
     /* Extract token_endpoint */
-    if (ngx_oidc_json_object_get_string(root, "token_endpoint",
-                                        &metadata->endpoints.token,
-                                        r->pool)
+    if (nxe_json_object_get_string(root, "token_endpoint",
+                                   &metadata->endpoints.token,
+                                   r->pool)
         != NGX_OK)
     {
         ngx_str_null(&metadata->endpoints.token);
     }
 
     /* Extract userinfo_endpoint */
-    if (ngx_oidc_json_object_get_string(root, "userinfo_endpoint",
-                                        &metadata->endpoints.userinfo,
-                                        r->pool)
+    if (nxe_json_object_get_string(root, "userinfo_endpoint",
+                                   &metadata->endpoints.userinfo,
+                                   r->pool)
         != NGX_OK)
     {
         ngx_str_null(&metadata->endpoints.userinfo);
     }
 
     /* Extract jwks_uri */
-    if (ngx_oidc_json_object_get_string(root, "jwks_uri",
-                                        &metadata->endpoints.jwks_uri,
-                                        r->pool)
+    if (nxe_json_object_get_string(root, "jwks_uri",
+                                   &metadata->endpoints.jwks_uri,
+                                   r->pool)
         != NGX_OK)
     {
         ngx_str_null(&metadata->endpoints.jwks_uri);
     }
 
     /* Extract end_session_endpoint (optional) */
-    if (ngx_oidc_json_object_get_string(root, "end_session_endpoint",
-                                        &metadata->endpoints.end_session,
-                                        r->pool)
+    if (nxe_json_object_get_string(root, "end_session_endpoint",
+                                   &metadata->endpoints.end_session,
+                                   r->pool)
         != NGX_OK)
     {
         ngx_str_null(&metadata->endpoints.end_session);
@@ -561,7 +561,7 @@ metadata_parse_json(ngx_http_request_t *r, ngx_str_t *body,
     metadata->expires_at = metadata->fetched_at + 3600; /* 1 hour TTL */
 
     /* Free JSON */
-    ngx_oidc_json_free(root);
+    nxe_json_free(root);
 
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                    "oidc_metadata: JSON parsing completed successfully");

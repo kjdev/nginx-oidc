@@ -9,14 +9,14 @@
 #include "ngx_http_oidc_module.h"
 #include "ngx_oidc_provider.h"
 #include "ngx_oidc_session.h"
-#include "ngx_oidc_json.h"
+#include "nxe_json.h"
 #include "ngx_oidc_jwt.h"
 
-/* Pool cleanup handler for Jansson JSON objects */
+/* Pool cleanup handler for nxe_json handles */
 static void
 oidc_variable_json_cleanup(void *data)
 {
-    ngx_oidc_json_free((ngx_oidc_json_t *) data);
+    nxe_json_free((nxe_json_t *) data);
 }
 
 /* Token type enumeration */
@@ -142,8 +142,8 @@ ngx_oidc_variable_claim(ngx_http_request_t *r, ngx_http_variable_value_t *v,
     ngx_http_oidc_ctx_t *ctx;
     ngx_str_t provider_name, token_value, payload, claim_name;
     ngx_str_t *session_id;
-    ngx_oidc_json_t *payload_json, *claim_value;
-    const char *str_value;
+    nxe_json_t *payload_json, *claim_value;
+    ngx_str_t str_value;
     ngx_flag_t need_to_free_json = 0;
     ngx_int_t rc;
 
@@ -225,7 +225,7 @@ ngx_oidc_variable_claim(ngx_http_request_t *r, ngx_http_variable_value_t *v,
         }
 
         /* Parse payload JSON */
-        payload_json = ngx_oidc_json_parse(&payload, r->pool);
+        payload_json = nxe_json_parse(&payload, r->pool);
         if (!payload_json) {
             v->not_found = 1;
             return NGX_OK;
@@ -234,7 +234,7 @@ ngx_oidc_variable_claim(ngx_http_request_t *r, ngx_http_variable_value_t *v,
         /* Cache the parsed payload for this request */
         ctx->cached.id_token_payload = payload_json;
 
-        /* Register pool cleanup to free Jansson JSON on request end */
+        /* Register pool cleanup to free the handle on request end */
         {
             ngx_pool_cleanup_t *cln;
 
@@ -266,7 +266,7 @@ ngx_oidc_variable_claim(ngx_http_request_t *r, ngx_http_variable_value_t *v,
     ngx_http_variable_t *var = (ngx_http_variable_t *) data;
     if (var->name.len <= 11) { /* "oidc_claim_".length = 11 */
         if (need_to_free_json) {
-            ngx_oidc_json_free(payload_json);
+            nxe_json_free(payload_json);
         }
         v->not_found = 1;
         return NGX_OK;
@@ -279,7 +279,7 @@ ngx_oidc_variable_claim(ngx_http_request_t *r, ngx_http_variable_value_t *v,
     char *claim_key = ngx_pnalloc(r->pool, claim_name.len + 1);
     if (claim_key == NULL) {
         if (need_to_free_json) {
-            ngx_oidc_json_free(payload_json);
+            nxe_json_free(payload_json);
         }
         v->not_found = 1;
         return NGX_OK;
@@ -287,20 +287,20 @@ ngx_oidc_variable_claim(ngx_http_request_t *r, ngx_http_variable_value_t *v,
     ngx_memcpy(claim_key, claim_name.data, claim_name.len);
     claim_key[claim_name.len] = '\0';
 
-    claim_value = ngx_oidc_json_object_get(payload_json, claim_key);
+    claim_value = nxe_json_object_get(payload_json, claim_key);
     if (!claim_value) {
         /* Claim not found in ID token, try UserInfo data */
         ngx_str_t userinfo_data;
-        ngx_oidc_json_t *userinfo_json = NULL;
+        nxe_json_t *userinfo_json = NULL;
 
         rc = ngx_oidc_session_get_userinfo(r, provider->session_store,
                                            session_id, &userinfo_data);
         if (rc == NGX_OK && userinfo_data.len > 0) {
             /* Parse UserInfo JSON */
-            userinfo_json = ngx_oidc_json_parse(&userinfo_data, r->pool);
+            userinfo_json = nxe_json_parse(&userinfo_data, r->pool);
             if (userinfo_json) {
                 claim_value =
-                    ngx_oidc_json_object_get(userinfo_json, claim_key);
+                    nxe_json_object_get(userinfo_json, claim_key);
                 if (claim_value) {
                     ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                                    "oidc_variable: found claim '%s' "
@@ -309,7 +309,7 @@ ngx_oidc_variable_claim(ngx_http_request_t *r, ngx_http_variable_value_t *v,
                     /* Free ID token payload JSON as we'll use userinfo JSON
                      * instead */
                     if (need_to_free_json) {
-                        ngx_oidc_json_free(payload_json);
+                        nxe_json_free(payload_json);
                         need_to_free_json = 0;
                     }
                     /* Mark userinfo JSON for freeing after extracting claim
@@ -318,7 +318,7 @@ ngx_oidc_variable_claim(ngx_http_request_t *r, ngx_http_variable_value_t *v,
                     need_to_free_json = 1;
                 } else {
                     /* Claim not in userinfo either, free userinfo JSON */
-                    ngx_oidc_json_free(userinfo_json);
+                    nxe_json_free(userinfo_json);
                 }
             }
         }
@@ -326,38 +326,44 @@ ngx_oidc_variable_claim(ngx_http_request_t *r, ngx_http_variable_value_t *v,
         if (!claim_value) {
             /* Claim not found in both ID token and UserInfo */
             if (need_to_free_json) {
-                ngx_oidc_json_free(payload_json);
+                nxe_json_free(payload_json);
             }
             v->not_found = 1;
             return NGX_OK;
         }
     }
 
-    if (ngx_oidc_json_is_string(claim_value)) {
-        str_value = ngx_oidc_json_string(claim_value);
-        if (str_value) {
-            v->len = ngx_strlen(str_value);
+    if (nxe_json_is_string(claim_value)) {
+        if (nxe_json_string(claim_value, &str_value) == NGX_OK) {
+            v->len = str_value.len;
             v->data = ngx_pnalloc(r->pool, v->len);
             if (v->data == NULL) {
                 if (need_to_free_json) {
-                    ngx_oidc_json_free(payload_json);
+                    nxe_json_free(payload_json);
                 }
                 v->not_found = 1;
                 return NGX_OK;
             }
-            ngx_memcpy(v->data, str_value, v->len);
+            ngx_memcpy(v->data, str_value.data, v->len);
             v->valid = 1;
             v->no_cacheable = 0;
             v->not_found = 0;
         } else {
             v->not_found = 1;
         }
-    } else if (ngx_oidc_json_is_integer(claim_value)) {
-        ngx_int_t int_value = ngx_oidc_json_integer(claim_value);
+    } else if (nxe_json_is_integer(claim_value)) {
+        int64_t int_value;
+        if (nxe_json_integer(claim_value, &int_value) != NGX_OK) {
+            if (need_to_free_json) {
+                nxe_json_free(payload_json);
+            }
+            v->not_found = 1;
+            return NGX_OK;
+        }
         v->data = ngx_pnalloc(r->pool, NGX_INT64_LEN);
         if (v->data == NULL) {
             if (need_to_free_json) {
-                ngx_oidc_json_free(payload_json);
+                nxe_json_free(payload_json);
             }
             v->not_found = 1;
             return NGX_OK;
@@ -366,14 +372,22 @@ ngx_oidc_variable_claim(ngx_http_request_t *r, ngx_http_variable_value_t *v,
         v->valid = 1;
         v->no_cacheable = 0;
         v->not_found = 0;
-    } else if (ngx_oidc_json_is_boolean(claim_value)) {
-        const char *bool_str =
-            ngx_oidc_json_boolean(claim_value) ? "true" : "false";
+    } else if (nxe_json_is_boolean(claim_value)) {
+        ngx_flag_t bool_value;
+        const char *bool_str;
+        if (nxe_json_boolean(claim_value, &bool_value) != NGX_OK) {
+            if (need_to_free_json) {
+                nxe_json_free(payload_json);
+            }
+            v->not_found = 1;
+            return NGX_OK;
+        }
+        bool_str = bool_value ? "true" : "false";
         v->len = ngx_strlen(bool_str);
         v->data = ngx_pnalloc(r->pool, v->len);
         if (v->data == NULL) {
             if (need_to_free_json) {
-                ngx_oidc_json_free(payload_json);
+                nxe_json_free(payload_json);
             }
             v->not_found = 1;
             return NGX_OK;
@@ -388,7 +402,7 @@ ngx_oidc_variable_claim(ngx_http_request_t *r, ngx_http_variable_value_t *v,
 
     /* Don't free payload_json if it's cached */
     if (need_to_free_json) {
-        ngx_oidc_json_free(payload_json);
+        nxe_json_free(payload_json);
     }
 
     return NGX_OK;

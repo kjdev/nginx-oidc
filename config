@@ -1,10 +1,25 @@
 ngx_addon_name=ngx_http_oidc_module
 
+# --- submodule: nxe-json ---
+nxe_json_dir="$ngx_addon_dir/nxe-json"
+
+if [ ! -f "$nxe_json_dir/config.ngx" ]; then
+    echo "$0: error: $nxe_json_dir/config.ngx not found" >&2
+    exit 1
+fi
+
+. "$nxe_json_dir/config.ngx"
+
+# --- module definition ---
 ngx_module_type=HTTP
 ngx_module_name="ngx_http_oidc_module"
-ngx_module_deps=
-ngx_module_incs="$ngx_addon_dir/src"
+ngx_module_deps="$nxe_json_module_deps"
+ngx_module_incs="\
+  $nxe_json_module_incs \
+  $ngx_addon_dir/src \
+"
 ngx_module_srcs="\
+  $nxe_json_module_srcs \
   $ngx_addon_dir/src/ngx_http_oidc_module.c \
   $ngx_addon_dir/src/ngx_oidc_handler_authenticate.c \
   $ngx_addon_dir/src/ngx_oidc_handler_callback.c \
@@ -12,7 +27,6 @@ ngx_module_srcs="\
   $ngx_addon_dir/src/ngx_oidc_handler_status.c \
   $ngx_addon_dir/src/ngx_oidc_hash.c \
   $ngx_addon_dir/src/ngx_oidc_http.c \
-  $ngx_addon_dir/src/ngx_oidc_json.c \
   $ngx_addon_dir/src/ngx_oidc_jwks.c \
   $ngx_addon_dir/src/ngx_oidc_jwt.c \
   $ngx_addon_dir/src/ngx_oidc_metadata.c \
@@ -26,9 +40,9 @@ ngx_module_srcs="\
   $ngx_addon_dir/src/ngx_oidc_variable.c \
 "
 ngx_module_libs="\
+  $nxe_json_module_libs \
   -lcrypto \
   -lhiredis \
-  -ljansson \
 "
 
 . auto/module

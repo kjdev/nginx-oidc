@@ -17,7 +17,7 @@
 #include <openssl/core_names.h>
 #include <openssl/err.h>
 #include <openssl/obj_mac.h>
-#include "ngx_oidc_json.h"
+#include "nxe_json.h"
 
 /** Maximum JWT token length (16 KiB) */
 #define NGX_OIDC_MAX_JWT_LENGTH  16384

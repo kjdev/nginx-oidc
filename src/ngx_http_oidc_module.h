@@ -9,7 +9,7 @@
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_http.h>
-#include <jansson.h>
+#include "nxe_json.h"
 #include "ngx_oidc_jwt.h"
 #include "ngx_oidc_session_store.h"
 #include "ngx_oidc_metadata.h"
@@ -173,7 +173,7 @@ typedef struct {
     /** Cached authentication data */
     struct {
         /** decoded ID token */
-        ngx_oidc_json_t           *id_token_payload;
+        nxe_json_t                *id_token_payload;
         /** session identifier */
         ngx_str_t                  session_id;
         /** provider metadata */

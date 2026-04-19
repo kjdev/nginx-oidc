@@ -7,6 +7,7 @@
 #include <ngx_core.h>
 #include <ngx_http.h>
 #include "ngx_http_oidc_module.h"
+#include "nxe_json.h"
 #include "ngx_oidc_jwks.h"
 #include "ngx_oidc_metadata.h"
 #include "ngx_oidc_handler_status.h"
@@ -77,39 +78,24 @@ static ngx_int_t
 status_jwks_pretty_print(ngx_pool_t *pool, ngx_str_t *raw_json,
     ngx_str_t *pretty_json)
 {
-    json_t *root;
-    json_error_t error;
-    char *pretty;
-    size_t len;
+    nxe_json_t *root;
+    ngx_str_t *compact;
 
-    root = json_loadb((const char *) raw_json->data, raw_json->len,
-                      0, &error);
+    root = nxe_json_parse(raw_json, pool);
     if (root == NULL) {
-        /* Fallback to raw JSON if parsing fails */
         *pretty_json = *raw_json;
         return NGX_OK;
     }
 
-    pretty = json_dumps(root, JSON_INDENT(2));
-    json_decref(root);
+    compact = nxe_json_stringify_compact(root, pool);
+    nxe_json_free(root);
 
-    if (pretty == NULL) {
+    if (compact == NULL) {
         *pretty_json = *raw_json;
         return NGX_OK;
     }
 
-    len = ngx_strlen(pretty);
-
-    pretty_json->data = ngx_pnalloc(pool, len);
-    if (pretty_json->data == NULL) {
-        free(pretty);
-        return NGX_ERROR;
-    }
-
-    ngx_memcpy(pretty_json->data, pretty, len);
-    pretty_json->len = len;
-
-    free(pretty);
+    *pretty_json = *compact;
 
     return NGX_OK;
 }
