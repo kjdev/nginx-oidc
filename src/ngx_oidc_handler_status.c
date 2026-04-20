@@ -79,7 +79,7 @@ status_jwks_pretty_print(ngx_pool_t *pool, ngx_str_t *raw_json,
     ngx_str_t *pretty_json)
 {
     nxe_json_t *root;
-    ngx_str_t *compact;
+    ngx_str_t *pretty;
 
     root = nxe_json_parse(raw_json, pool);
     if (root == NULL) {
@@ -87,15 +87,15 @@ status_jwks_pretty_print(ngx_pool_t *pool, ngx_str_t *raw_json,
         return NGX_OK;
     }
 
-    compact = nxe_json_stringify_compact(root, pool);
+    pretty = nxe_json_stringify_pretty(root, pool, 2);
     nxe_json_free(root);
 
-    if (compact == NULL) {
+    if (pretty == NULL) {
         *pretty_json = *raw_json;
         return NGX_OK;
     }
 
-    *pretty_json = *compact;
+    *pretty_json = *pretty;
 
     return NGX_OK;
 }
