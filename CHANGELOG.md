@@ -1,5 +1,38 @@
 # Changelog
 
+## [9313e8d](../../commit/9313e8d) - 2026-04-23
+
+### Fixed
+
+- Parse provider-originated JSON with DoS-hardened limits
+  - Unify JWT payload/header, UserInfo, and ID token re-parse paths under `nxe_json_parse_untrusted`
+  - A valid signature authenticates the source but does not guarantee structural safety, so the full limit set (depth 10, array 100, string 4 KiB, object keys 256, total 1 MiB) is now applied on every path
+
+## [6a94419](../../commit/6a94419) - 2026-04-23
+
+### Added
+
+- Restore pretty-printed JWKS output in the status endpoint
+  - Use `nxe_json_stringify_pretty()` with indent=2 for formatted output
+
+## [23c3a72](../../commit/23c3a72) - 2026-04-23
+
+### Changed
+
+- Switch OIDC sources to the `nxe_json` API
+  - Remove the in-tree `src/ngx_oidc_json.c/h` and migrate every call site to the `nxe_json_t` / `nxe_json_*` API
+  - `nxe_json_string()` returns a borrowed `ngx_str_t`, enabling binary-safe comparisons and copies
+
+## [6948abc](../../commit/6948abc) - 2026-04-23
+
+### Added
+
+- Add `nxe-json` as a git submodule
+  - Shared JSON abstraction layer at `https://github.com/kjdev/nxe-json`
+  - `config` sources `nxe-json/config.ngx`; build errors out explicitly when the submodule is not initialized
+  - Dockerfile copies `nxe-json/` into the build context
+  - CI workflows enable submodule checkout
+
 ## [5e11050](../../commit/5e11050) - 2026-03-17
 
 ### Added
