@@ -278,7 +278,10 @@ jwt_parse_claims(const char *payload_json, jwt_claims_t *claims,
     json_str.data = (u_char *) payload_json;
     json_str.len = ngx_strlen(payload_json);
 
-    root = nxe_json_parse(&json_str, pool);
+    /* JWT payload originates from the OIDC provider: enforce DoS limits
+     * even after signature verification (a valid signature authenticates
+     * the source, not the structural safety of the JSON). */
+    root = nxe_json_parse_untrusted(&json_str, pool);
     if (!root) {
         return NGX_ERROR;
     }
@@ -628,8 +631,8 @@ jwt_validate_claims(ngx_http_request_t *r, const jwt_claims_t *claims,
         if (ngx_oidc_jwt_decode_header(params->token, &header, r->pool)
             == NGX_OK)
         {
-            /* Parse header JSON */
-            header_json = nxe_json_parse(&header, r->pool);
+            /* Parse header JSON (provider-originated, apply DoS limits) */
+            header_json = nxe_json_parse_untrusted(&header, r->pool);
             if (header_json) {
                 alg_value = nxe_json_object_get(header_json, "alg");
                 if (nxe_json_is_string(alg_value)
@@ -1224,10 +1227,10 @@ jwt_verify_signature(ngx_http_request_t *r, ngx_str_t *token,
         return NGX_ERROR;
     }
 
-    /* Parse header JSON */
+    /* Parse header JSON (pre-verification, untrusted input) */
     header_decoded.data[header_decoded.len] = '\0';
     ngx_str_t header_json_str = { header_decoded.len, header_decoded.data };
-    header_json = nxe_json_parse(&header_json_str, pool);
+    header_json = nxe_json_parse_untrusted(&header_json_str, pool);
     if (!header_json) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_jwt: Failed to parse JWT header JSON");

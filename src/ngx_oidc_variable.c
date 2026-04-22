@@ -224,8 +224,9 @@ ngx_oidc_variable_claim(ngx_http_request_t *r, ngx_http_variable_value_t *v,
             return NGX_OK;
         }
 
-        /* Parse payload JSON */
-        payload_json = nxe_json_parse(&payload, r->pool);
+        /* Parse payload JSON (provider-originated ID token; apply DoS
+         * limits even after signature verification) */
+        payload_json = nxe_json_parse_untrusted(&payload, r->pool);
         if (!payload_json) {
             v->not_found = 1;
             return NGX_OK;
@@ -296,8 +297,10 @@ ngx_oidc_variable_claim(ngx_http_request_t *r, ngx_http_variable_value_t *v,
         rc = ngx_oidc_session_get_userinfo(r, provider->session_store,
                                            session_id, &userinfo_data);
         if (rc == NGX_OK && userinfo_data.len > 0) {
-            /* Parse UserInfo JSON */
-            userinfo_json = nxe_json_parse(&userinfo_data, r->pool);
+            /* Parse UserInfo JSON (provider-originated; apply DoS limits
+             * even though compact_body was produced by parse_untrusted at
+             * save time, the session store is not a trust boundary) */
+            userinfo_json = nxe_json_parse_untrusted(&userinfo_data, r->pool);
             if (userinfo_json) {
                 claim_value =
                     nxe_json_object_get(userinfo_json, claim_key);

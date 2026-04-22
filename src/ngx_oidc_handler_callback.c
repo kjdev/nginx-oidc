@@ -511,8 +511,9 @@ callback_extract_and_validate_nonce(ngx_http_request_t *r,
         return NULL;
     }
 
-    /* Parse JSON payload */
-    payload_json = nxe_json_parse(&id_token_payload, r->pool);
+    /* Parse JSON payload (ID token came from the OIDC provider: apply
+     * DoS limits even after signature verification) */
+    payload_json = nxe_json_parse_untrusted(&id_token_payload, r->pool);
     if (payload_json == NULL) {
         return NULL;
     }
@@ -788,8 +789,9 @@ callback_verify_access_token(ngx_http_request_t *r,
         return NGX_ERROR;
     }
 
-    /* Parse payload JSON */
-    payload_json = nxe_json_parse(&payload, r->pool);
+    /* Parse payload JSON (provider-originated; apply DoS limits even
+     * post-verification) */
+    payload_json = nxe_json_parse_untrusted(&payload, r->pool);
     if (!payload_json) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_handler_callback: failed to parse ID token "
@@ -827,7 +829,8 @@ callback_verify_access_token(ngx_http_request_t *r,
     if (ngx_oidc_jwt_decode_header(&id_token_value, &header, r->pool)
         == NGX_OK)
     {
-        header_json = nxe_json_parse(&header, r->pool);
+        /* Provider-originated header; apply DoS limits */
+        header_json = nxe_json_parse_untrusted(&header, r->pool);
         if (header_json) {
             alg_json = nxe_json_object_get(header_json, "alg");
             if (alg_json && nxe_json_is_string(alg_json)
@@ -1177,9 +1180,10 @@ callback_userinfo_done(ngx_http_request_t *r, void *data, ngx_int_t rc)
             return NGX_OK;
         }
 
-        /* Parse ID token payload JSON using abstraction layer */
+        /* Parse ID token payload JSON (provider-originated; apply DoS
+         * limits even post-verification) */
         nxe_json_t *id_token_json
-            = nxe_json_parse(&id_token_payload, main_r->pool);
+            = nxe_json_parse_untrusted(&id_token_payload, main_r->pool);
         if (id_token_json == NULL) {
             ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
                           "oidc_handler_callback: failed to parse ID "

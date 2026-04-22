@@ -81,7 +81,7 @@ status_jwks_pretty_print(ngx_pool_t *pool, ngx_str_t *raw_json,
     nxe_json_t *root;
     ngx_str_t *pretty;
 
-    root = nxe_json_parse(raw_json, pool);
+    root = nxe_json_parse_untrusted(raw_json, pool);
     if (root == NULL) {
         *pretty_json = *raw_json;
         return NGX_OK;
