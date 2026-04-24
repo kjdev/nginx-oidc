@@ -1,5 +1,13 @@
 # Changelog
 
+## [4db1104](../../commit/4db1104) - 2026-04-24
+
+### Changed
+
+- Bump `nxe-json` submodule to `0.2.0`
+  - Add `nxe_json_object_get_integer` / `nxe_json_object_get_boolean` helpers for typed object-member extraction
+  - Zero-clear extractor out-params on every non-`NGX_OK` exit to prevent silent downgrade when callers skip the return-value check
+
 ## [9313e8d](../../commit/9313e8d) - 2026-04-23
 
 ### Fixed
