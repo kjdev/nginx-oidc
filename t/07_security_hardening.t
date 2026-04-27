@@ -34,7 +34,7 @@ __DATA__
 GET /test-error
 --- error_code: 500
 --- error_log
-HMAC algorithm
+is not supported
 
 === security: jwe format rejection
 --- http_config
@@ -63,7 +63,7 @@ HMAC algorithm
 GET /test-error
 --- error_code: 500
 --- error_log
-more than 3 segments
+more than three segments
 
 === security: empty header segment rejection
 --- http_config
@@ -92,7 +92,7 @@ more than 3 segments
 GET /test-error
 --- error_code: 500
 --- error_log
-empty header
+empty segment
 
 === security: empty payload segment rejection
 --- http_config
@@ -121,4 +121,4 @@ empty header
 GET /test-error
 --- error_code: 500
 --- error_log
-empty payload
+empty segment
