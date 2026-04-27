@@ -139,7 +139,7 @@ callback_token_done(ngx_http_request_t *r, void *data, ngx_int_t rc)
 
     /* Extract access_token using subrequest pool */
     if (nxe_json_object_get_string(root, "access_token", &access_token,
-                                        r->pool)
+                                   r->pool)
         != NGX_OK)
     {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
@@ -151,7 +151,7 @@ callback_token_done(ngx_http_request_t *r, void *data, ngx_int_t rc)
 
     /* Extract token_type (optional) using subrequest pool */
     if (nxe_json_object_get_string(root, "token_type", &token_type,
-                                        r->pool)
+                                   r->pool)
         != NGX_OK)
     {
         ngx_str_set(&token_type, "Bearer"); /* Default to Bearer */
@@ -186,7 +186,7 @@ callback_token_done(ngx_http_request_t *r, void *data, ngx_int_t rc)
 
     /* Extract id_token (optional for OIDC) */
     if (nxe_json_object_get_string(root, "id_token", &id_token,
-                                        r->pool)
+                                   r->pool)
         != NGX_OK)
     {
         ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
@@ -499,35 +499,26 @@ callback_extract_and_validate_nonce(ngx_http_request_t *r,
     ngx_http_oidc_provider_t *provider, ngx_str_t *id_token,
     ngx_str_t *session_id)
 {
-    ngx_str_t id_token_payload;
-    nxe_json_t *payload_json = NULL, *nonce_json = NULL;
+    nxe_jwx_token_t *jwt_token;
+    nxe_json_t *payload_json;
     ngx_str_t nonce_value, stored_nonce;
     ngx_str_t *expected_nonce;
 
-    /* Decode JWT payload */
-    if (ngx_oidc_jwt_decode_payload(id_token, &id_token_payload, r->pool)
-        != NGX_OK)
-    {
+    /* Decode JWT (header + payload + signature) via nxe-jwx */
+    jwt_token = nxe_jwx_decode(id_token, r->pool);
+    if (jwt_token == NULL) {
         return NULL;
     }
 
-    /* Parse JSON payload (ID token came from the OIDC provider: apply
-     * DoS limits even after signature verification) */
-    payload_json = nxe_json_parse_untrusted(&id_token_payload, r->pool);
+    payload_json = nxe_jwx_token_payload(jwt_token);
     if (payload_json == NULL) {
         return NULL;
     }
 
     /* Get nonce from payload */
-    nonce_json = nxe_json_object_get(payload_json, "nonce");
-    if (!nxe_json_is_string(nonce_json)) {
-        nxe_json_free(payload_json);
-        return NULL;
-    }
-
-    /* Setup nonce value (binary-safe, borrowed until payload_json free) */
-    if (nxe_json_string(nonce_json, &nonce_value) != NGX_OK) {
-        nxe_json_free(payload_json);
+    if (nxe_jwx_claims_get_string(payload_json, "nonce", &nonce_value)
+        != NGX_OK)
+    {
         return NULL;
     }
 
@@ -539,7 +530,6 @@ callback_extract_and_validate_nonce(ngx_http_request_t *r,
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_handler_callback: nonce not found or expired "
                       "in session store");
-        nxe_json_free(payload_json);
         return NULL;
     }
 
@@ -556,16 +546,16 @@ callback_extract_and_validate_nonce(ngx_http_request_t *r,
                       ? "shared memory"
                       : "redis",
                       stored_nonce.len, nonce_value.len, session_id);
-        nxe_json_free(payload_json);
         return NULL;
     }
 
-    /* Allocate expected_nonce in request pool */
+    /* Allocate expected_nonce in request pool (copied out of the JSON
+     * buffer because the token will be freed when the request pool is
+     * destroyed and the caller wants a stable view). */
     expected_nonce = ngx_palloc(r->pool, sizeof(ngx_str_t));
     if (expected_nonce == NULL) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_handler_callback: failed to allocate nonce");
-        nxe_json_free(payload_json);
         return NULL;
     }
 
@@ -573,7 +563,6 @@ callback_extract_and_validate_nonce(ngx_http_request_t *r,
     if (expected_nonce->data == NULL) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_handler_callback: failed to allocate nonce data");
-        nxe_json_free(payload_json);
         return NULL;
     }
 
@@ -583,13 +572,11 @@ callback_extract_and_validate_nonce(ngx_http_request_t *r,
     /* Delete nonce (one-time use) */
     ngx_oidc_session_delete_nonce(r, provider->session_store, session_id);
 
-    nxe_json_free(payload_json);
-
     return expected_nonce;
 }
 
 static char *
-string_copy_to_pool(ngx_pool_t *pool, ngx_str_t *src,
+string_copy_to_pool(ngx_pool_t *pool, const ngx_str_t *src,
     ngx_http_request_t *r, const char *name)
 {
     char *copy;
@@ -722,8 +709,7 @@ callback_verify_id_token(ngx_http_request_t *r,
                    "oidc_handler_callback: verify_id_token "
                    "- using JWKS cache for provider %V (%ui keys)",
                    &provider->name,
-                   (ngx_oidc_jwks_cache_node_get_keys(jwks) != NULL)
-                   ? ngx_oidc_jwks_cache_node_get_keys(jwks)->nelts : 0);
+                   ngx_oidc_jwks_get_key_count(jwks));
 
     return ngx_oidc_jwt_verify(r, &id_token, jwks, &params);
 }
@@ -733,9 +719,11 @@ callback_verify_access_token(ngx_http_request_t *r,
     ngx_http_oidc_provider_t *provider)
 {
     ngx_str_t *session_id;
-    ngx_str_t id_token_value, access_token_value, payload, header;
-    nxe_json_t *payload_json, *at_hash_json, *header_json, *alg_json;
-    ngx_str_t at_hash_str, algorithm_str;
+    ngx_str_t id_token_value, access_token_value;
+    nxe_jwx_token_t *jwt_token;
+    nxe_json_t *payload_json;
+    const ngx_str_t *alg_str;
+    ngx_str_t at_hash_str;
     char *at_hash_copy = NULL, *algorithm_copy = NULL;
 
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
@@ -779,73 +767,47 @@ callback_verify_access_token(ngx_http_request_t *r,
         return NGX_OK; /* No ID token, cannot validate at_hash */
     }
 
-    /* Extract JWT payload from ID token */
-    if (ngx_oidc_jwt_decode_payload(&id_token_value, &payload, r->pool)
-        != NGX_OK)
-    {
+    /* Decode the ID token via nxe-jwx (header + payload + signature) */
+    jwt_token = nxe_jwx_decode(&id_token_value, r->pool);
+    if (jwt_token == NULL) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_handler_callback: failed to decode ID token "
-                      "payload for at_hash validation");
+                      "for at_hash validation");
         return NGX_ERROR;
     }
 
-    /* Parse payload JSON (provider-originated; apply DoS limits even
-     * post-verification) */
-    payload_json = nxe_json_parse_untrusted(&payload, r->pool);
-    if (!payload_json) {
+    payload_json = nxe_jwx_token_payload(jwt_token);
+    if (payload_json == NULL) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                      "oidc_handler_callback: failed to parse ID token "
+                      "oidc_handler_callback: failed to obtain ID token "
                       "payload JSON for at_hash validation");
         return NGX_ERROR;
     }
 
     /* Get at_hash from ID token */
-    at_hash_json = nxe_json_object_get(payload_json, "at_hash");
-    if (!at_hash_json || !nxe_json_is_string(at_hash_json)) {
-        nxe_json_free(payload_json);
+    if (nxe_jwx_claims_get_string(payload_json, "at_hash", &at_hash_str)
+        != NGX_OK)
+    {
         ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                        "oidc_handler_callback: no at_hash found in ID token, "
                        "skipping access token validation");
         return NGX_OK; /* No at_hash in ID token, cannot validate */
     }
 
-    if (nxe_json_string(at_hash_json, &at_hash_str) != NGX_OK) {
-        nxe_json_free(payload_json);
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                      "oidc_handler_callback: invalid at_hash value "
-                      "in ID token");
-        return NGX_ERROR;
-    }
-
-    /* Copy at_hash to pool before freeing JSON (NUL-terminated for
-     * ngx_oidc_jwt_validate_at_hash which takes const char *) */
+    /* Copy at_hash into pool with NUL terminator for the validator API */
     at_hash_copy = string_copy_to_pool(r->pool, &at_hash_str, r, "at_hash");
     if (!at_hash_copy) {
-        nxe_json_free(payload_json);
         return NGX_ERROR;
     }
 
-    /* Extract algorithm from JWT header for proper hash function selection */
-    if (ngx_oidc_jwt_decode_header(&id_token_value, &header, r->pool)
-        == NGX_OK)
-    {
-        /* Provider-originated header; apply DoS limits */
-        header_json = nxe_json_parse_untrusted(&header, r->pool);
-        if (header_json) {
-            alg_json = nxe_json_object_get(header_json, "alg");
-            if (alg_json && nxe_json_is_string(alg_json)
-                && nxe_json_string(alg_json, &algorithm_str) == NGX_OK)
-            {
-                /* Copy algorithm to pool before freeing JSON */
-                algorithm_copy = string_copy_to_pool(
-                    r->pool, &algorithm_str, r, "algorithm");
-            }
-            nxe_json_free(header_json);
-        }
+    /* Extract algorithm directly from the decoded header */
+    alg_str = nxe_jwx_token_alg(jwt_token);
+    if (alg_str != NULL) {
+        algorithm_copy = string_copy_to_pool(r->pool, alg_str, r,
+                                             "algorithm");
     }
 
     if (!algorithm_copy) {
-        nxe_json_free(payload_json);
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_handler_callback: failed to extract algorithm "
                       "from ID token header");
@@ -857,14 +819,11 @@ callback_verify_access_token(ngx_http_request_t *r,
                                       &access_token_value)
         != NGX_OK)
     {
-        nxe_json_free(payload_json);
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_handler_callback: at_hash validation failed "
                       "for access_token");
         return NGX_ERROR;
     }
-
-    nxe_json_free(payload_json);
 
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                    "oidc_handler_callback: access_token validated "
@@ -1163,12 +1122,10 @@ callback_userinfo_done(ngx_http_request_t *r, void *data, ngx_int_t rc)
             return NGX_OK;
         }
 
-        /* Decode ID token payload to extract sub */
-        ngx_str_t id_token_payload;
-        if (ngx_oidc_jwt_decode_payload(&id_token_str, &id_token_payload,
-                                        main_r->pool)
-            != NGX_OK)
-        {
+        /* Decode ID token via nxe-jwx and pull "sub" out of the payload */
+        nxe_jwx_token_t *id_jwt_token = nxe_jwx_decode(&id_token_str,
+                                                       main_r->pool);
+        if (id_jwt_token == NULL) {
             ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
                           "oidc_handler_callback: failed to decode ID "
                           "token for sub validation, continuing without "
@@ -1180,32 +1137,12 @@ callback_userinfo_done(ngx_http_request_t *r, void *data, ngx_int_t rc)
             return NGX_OK;
         }
 
-        /* Parse ID token payload JSON (provider-originated; apply DoS
-         * limits even post-verification) */
-        nxe_json_t *id_token_json
-            = nxe_json_parse_untrusted(&id_token_payload, main_r->pool);
-        if (id_token_json == NULL) {
+        nxe_json_t *id_token_payload_json
+            = nxe_jwx_token_payload(id_jwt_token);
+        if (id_token_payload_json == NULL) {
             ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
-                          "oidc_handler_callback: failed to parse ID "
-                          "token payload JSON, continuing without "
-                          "userinfo data");
-            nxe_json_free(userinfo_json);
-            /* Transition to next phase without userinfo data */
-            main_ctx->callback.state
-                = NGX_HTTP_OIDC_CALLBACK_STATE_SESSION_SAVE;
-            return NGX_OK;
-        }
-
-        /* Extract sub claim from ID token */
-        nxe_json_t *id_token_sub_json = nxe_json_object_get(
-            id_token_json, "sub");
-        if (id_token_sub_json == NULL
-            || !nxe_json_is_string(id_token_sub_json))
-        {
-            ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
-                          "oidc_handler_callback: ID token missing sub "
-                          "claim, continuing without userinfo data");
-            nxe_json_free(id_token_json);
+                          "oidc_handler_callback: ID token has no payload "
+                          "JSON, continuing without userinfo data");
             nxe_json_free(userinfo_json);
             /* Transition to next phase without userinfo data */
             main_ctx->callback.state
@@ -1214,11 +1151,12 @@ callback_userinfo_done(ngx_http_request_t *r, void *data, ngx_int_t rc)
         }
 
         ngx_str_t id_token_sub_val;
-        if (nxe_json_string(id_token_sub_json, &id_token_sub_val) != NGX_OK) {
+        if (nxe_jwx_claims_get_string(id_token_payload_json, "sub",
+                                      &id_token_sub_val) != NGX_OK)
+        {
             ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
-                          "oidc_handler_callback: failed to get ID token "
-                          "sub value, continuing without userinfo data");
-            nxe_json_free(id_token_json);
+                          "oidc_handler_callback: ID token missing sub "
+                          "claim, continuing without userinfo data");
             nxe_json_free(userinfo_json);
             /* Transition to next phase without userinfo data */
             main_ctx->callback.state
@@ -1233,7 +1171,6 @@ callback_userinfo_done(ngx_http_request_t *r, void *data, ngx_int_t rc)
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                           "oidc_handler_callback: failed to allocate "
                           "id_token sub");
-            nxe_json_free(id_token_json);
             nxe_json_free(userinfo_json);
             return NGX_ERROR;
         }
@@ -1253,7 +1190,6 @@ callback_userinfo_done(ngx_http_request_t *r, void *data, ngx_int_t rc)
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                           "oidc_handler_callback: UserInfo sub validation "
                           "failed - sub mismatch");
-            nxe_json_free(id_token_json);
             nxe_json_free(userinfo_json);
             return NGX_ERROR;
         }
@@ -1261,8 +1197,6 @@ callback_userinfo_done(ngx_http_request_t *r, void *data, ngx_int_t rc)
         ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                        "oidc_handler_callback: UserInfo sub validation "
                        "successful");
-
-        nxe_json_free(id_token_json);
     }
 
     /* Serialize userinfo JSON to compact format (no whitespace)

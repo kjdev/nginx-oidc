@@ -2,163 +2,55 @@
  * Copyright (c) Tatsuya Kamijo
  * Copyright (c) Bengo4.com, Inc.
  *
- * This module implements JWT (JSON Web Token) processing for OIDC
- * authentication.
- * It provides cryptographic signature verification using OpenSSL 3.0 and
- * validates
- * JWT claims according to OpenID Connect Core 1.0 and RFC 7519.
+ * OIDC-specific JWT validation on top of the nxe-jwx library.
  *
- * Key Features:
- * - JWT parsing (header, payload, signature extraction)
- * - Signature verification with multiple algorithms:
- *   - RSA: RS256, RS384, RS512 (PKCS#1 v1.5), PS256, PS384, PS512 (PSS)
- *   - EC: ES256, ES384, ES512, ES256K (secp256k1)
- *   - EdDSA: Ed25519, Ed448
- *   Note: HMAC algorithms (HS256/HS384/HS512) are not supported
- * - Claims validation:
- *   - Issuer (iss) matching
- *   - Audience (aud) matching
- *   - Expiration (exp) checking with configurable clock skew
- *   - Not-before (nbf) checking
- *   - Nonce validation for replay attack prevention
- *   - at_hash validation for token binding
- * - JWK (JSON Web Key) support for public key extraction
+ * JWT decode, signature verification (RS, PS, ES, EdDSA), and JWKS
+ * parsing are delegated to nxe-jwx. The none algorithm and HMAC
+ * variants are rejected by nxe-jwx itself.
  *
- * Security Implementation:
- * - OpenSSL 3.0 EVP API for all cryptographic operations
- * - Time-based validation with clock skew tolerance (default: 300 seconds)
- * - Base64url decoding according to RFC 4648
- * - Memory-safe operations with nginx pool allocation
+ * Claim validation (iss, aud, exp, iat, nbf, nonce, at_hash with
+ * clock skew) is performed here, because the policy is OIDC-specific
+ * and outside the scope of nxe-jwx.
  */
 
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_http.h>
+
 #include <openssl/evp.h>
-#include <openssl/rsa.h>
-#include <openssl/ec.h>
-#include <openssl/bn.h>
-#include <openssl/ecdsa.h>
-#include <openssl/param_build.h>
-#include <openssl/core_names.h>
 #include <openssl/err.h>
 #include <openssl/crypto.h>
-#include <openssl/obj_mac.h>
+
+#include "nxe_jwx.h"
+
 #include "ngx_oidc_jwt.h"
 #include "ngx_oidc_jwks.h"
-#include "nxe_json.h"
 #include "ngx_oidc_hash.h"
 
 /*
  * JWT Validation Result
- *
- * Enumeration of possible JWT validation outcomes.
- * Success (0) and various error conditions for detailed error reporting.
  */
 typedef enum {
     JWT_SUCCESS = 0,           /* Validation successful */
-    JWT_ERR_INVALID_FORMAT,    /* JWT format error (not 3 parts) */
+    JWT_ERR_INVALID_FORMAT,    /* JWT format error */
     JWT_ERR_INVALID_ISSUER,    /* Issuer mismatch */
     JWT_ERR_INVALID_AUDIENCE,  /* Audience mismatch */
-    JWT_ERR_TOKEN_EXPIRED,     /* Token expired (exp claim) */
+    JWT_ERR_TOKEN_EXPIRED,     /* Token expired */
     JWT_ERR_INVALID_NONCE,     /* Nonce mismatch */
-    JWT_ERR_SIGNATURE_FAILED,  /* Signature verification failed */
+    JWT_ERR_SIGNATURE_FAILED,  /* Signature / at_hash mismatch */
     JWT_ERR_MISSING_CLAIM,     /* Required claim missing */
     JWT_ERR_JSON_PARSE,        /* JSON parsing error */
     JWT_ERR_MEMORY             /* Memory allocation failure */
 } jwt_validation_result_t;
 
 /*
- * Allowed JWT Algorithms Whitelist
- */
-static const char *ngx_oidc_jwt_allowed_algs[] = {
-    "RS256", "RS384", "RS512",  /* RSA PKCS#1 v1.5 with SHA-256/384/512 */
-    "PS256", "PS384", "PS512",  /* RSA-PSS with SHA-256/384/512 */
-    "ES256", "ES384", "ES512",  /* ECDSA with SHA-256/384/512 */
-    "ES256K",                   /* ECDSA with SHA-256 and secp256k1 curve */
-    "EdDSA",                    /* EdDSA with Ed25519 or Ed448 */
-    NULL                        /* Terminator */
-};
-
-/**
- * Validate JWT Algorithm
- *
- * Verifies that the JWT algorithm is in the allowed whitelist and
- * explicitly rejects the "none" algorithm.
- *
- * @param[in] r    HTTP request
- * @param[in] alg  Algorithm string from JWT header
- *
- * @return NGX_OK if valid, NGX_ERROR if invalid
- */
-static ngx_int_t
-ngx_oidc_jwt_validate_algorithm(ngx_http_request_t *r, const char *alg)
-{
-    size_t i;
-
-    /* NULL/empty check */
-    if (alg == NULL || *alg == '\0') {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                      "oidc_jwt: JWT algorithm is missing");
-        return NGX_ERROR;
-    }
-
-    /* Explicit rejection of "none" */
-    if (ngx_strcmp(alg, "none") == 0) {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                      "oidc_jwt: JWT algorithm 'none' is not allowed");
-        return NGX_ERROR;
-    }
-
-    /* Explicit rejection of HMAC algorithms */
-    if (alg[0] == 'H' && alg[1] == 'S') {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                      "oidc_jwt: HMAC algorithm '%s' is not allowed", alg);
-        return NGX_ERROR;
-    }
-
-    /* Whitelist check */
-    for (i = 0; ngx_oidc_jwt_allowed_algs[i] != NULL; i++) {
-        if (ngx_strcmp(alg, ngx_oidc_jwt_allowed_algs[i]) == 0) {
-            return NGX_OK;
-        }
-    }
-
-    /* Unknown algorithm rejection */
-    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                  "oidc_jwt: JWT algorithm '%s' is not in whitelist", alg);
-
-    return NGX_ERROR;
-}
-
-/**
- * JWT Claims Structure
- *
- * Represents standard OIDC claims extracted from the JWT payload.
- * All string fields are null-terminated C strings allocated from nginx pool.
- * Time fields are Unix timestamps (seconds since epoch).
- *
- * Standard Claims (RFC 7519):
- * - iss (issuer): Token issuer identifier
- * - aud (audience): Intended audience (client_id)
- * - sub (subject): Subject identifier (user ID)
- * - exp (expiration): Token expiration time
- * - iat (issued at): Token issuance time
- * - nbf (not before): Token not valid before this time
- *
- * OIDC-specific Claims (OpenID Connect Core 1.0):
- * - nonce: String value used to associate client session with ID Token
- * - auth_time: Time when authentication occurred
- * - at_hash: Access Token hash value (for implicit flow)
- *
- * JWK Claims:
- * - kid: Key ID to match against JWKS
+ * JWT Claims Structure (extracted from the payload).
  */
 typedef struct {
     char   *issuer;
     char   *audience;       /* first audience (for backward compat) */
     char  **audiences;      /* all audiences (NULL-terminated array) */
-    size_t  audience_count; /* number of audiences */
+    size_t  audience_count;
     char   *subject;
     time_t  expiration;
     time_t  issued_at;
@@ -166,18 +58,10 @@ typedef struct {
     char   *nonce;
     time_t  auth_time;
     char   *at_hash;
-    char   *kid;
 } jwt_claims_t;
 
-/**
+/*
  * Get OpenSSL error message
- *
- * Helper function to retrieve and format OpenSSL error messages.
- * Uses ERR_get_error() to get the error code and ERR_error_string_n()
- * to format it into a human-readable string.
- *
- * @param[in] buf      Buffer to store error message
- * @param[in] buf_len  Buffer length
  */
 static void
 jwt_get_openssl_error(char *buf, size_t buf_len)
@@ -194,20 +78,37 @@ jwt_get_openssl_error(char *buf, size_t buf_len)
     }
 }
 
-/**
- * Extract time claim from JWT payload
+/*
+ * Duplicate an ngx_str_t into the pool with a trailing NUL.
+ * Returns NULL on allocation failure.
+ */
+static char *
+jwt_str_to_cstr(ngx_pool_t *pool, const ngx_str_t *src)
+{
+    char *copy;
+
+    if (src == NULL || src->data == NULL) {
+        return NULL;
+    }
+
+    copy = ngx_pnalloc(pool, src->len + 1);
+    if (copy == NULL) {
+        return NULL;
+    }
+
+    ngx_memcpy(copy, src->data, src->len);
+    copy[src->len] = '\0';
+    return copy;
+}
+
+/*
+ * Extract a time claim from JWT payload.
  *
- * Handles both integer and floating-point time values.
- * Floating-point values are truncated to seconds.
- *
- * @param[in] root        Parsed JSON root object
- * @param[in] claim_name  Claim name (e.g., "exp", "iat", "nbf")
- * @param[out] result     Extracted time value
- * @param[in] required    1 if claim is required, 0 if optional
- * @param[in] pool        Memory pool for logging
- *
- * @return NGX_OK on success, NGX_DECLINED if optional claim not present,
- *         NGX_ERROR if required claim missing or invalid type
+ * Handles both integer and floating-point time values; floating-point
+ * values are truncated to seconds.  This is broader than
+ * nxe_jwx_claims_get_integer (which is integer-only), so we keep this
+ * helper to preserve compatibility with providers that emit real-valued
+ * timestamps.
  */
 static ngx_int_t
 jwt_get_time_claim(nxe_json_t *root, const char *claim_name,
@@ -224,7 +125,7 @@ jwt_get_time_claim(nxe_json_t *root, const char *claim_name,
                           "oidc_jwt: %s claim is missing", claim_name);
             return NGX_ERROR;
         }
-        return NGX_DECLINED; /* Optional claim not present */
+        return NGX_DECLINED;
     }
 
     if (nxe_json_is_integer(value)) {
@@ -234,11 +135,10 @@ jwt_get_time_claim(nxe_json_t *root, const char *claim_name,
         *result = (time_t) int_value;
         return NGX_OK;
     } else if (nxe_json_is_real(value)) {
-        /* Handle floating-point time (e.g., with microseconds) */
         if (nxe_json_real(value, &real_value) != NGX_OK) {
             return NGX_ERROR;
         }
-        *result = (time_t) real_value; /* Truncate to seconds */
+        *result = (time_t) real_value;
         ngx_log_debug3(NGX_LOG_DEBUG_HTTP, pool->log, 0,
                        "oidc_jwt: %s claim is floating-point: %f -> %T",
                        claim_name, real_value, *result);
@@ -249,83 +149,51 @@ jwt_get_time_claim(nxe_json_t *root, const char *claim_name,
                           "oidc_jwt: %s claim has invalid type", claim_name);
             return NGX_ERROR;
         }
-        return NGX_DECLINED; /* Optional claim has wrong type */
+        return NGX_DECLINED;
     }
 }
 
-/**
- * Parse JWT claims from decoded payload JSON
- *
- * Extracts required (iss, aud, sub, exp, iat) and optional
- * (nbf, nonce, auth_time, at_hash) claims from the JWT payload.
- *
- * @param[in] payload_json  Decoded JWT payload as JSON string
- * @param[out] claims       Parsed claims structure
- * @param[in] pool          Memory pool for allocation
- *
- * @return NGX_OK on success, NGX_ERROR on failure
+/*
+ * Parse JWT claims from a payload JSON object owned by the caller.
  */
 static ngx_int_t
-jwt_parse_claims(const char *payload_json, jwt_claims_t *claims,
-    ngx_pool_t *pool)
+jwt_parse_claims(nxe_json_t *root, jwt_claims_t *claims, ngx_pool_t *pool)
 {
-    nxe_json_t *root, *value;
+    nxe_json_t *value;
     ngx_str_t str_value;
-    ngx_str_t json_str;
+    ngx_int_t rc;
 
     ngx_memzero(claims, sizeof(jwt_claims_t));
 
-    json_str.data = (u_char *) payload_json;
-    json_str.len = ngx_strlen(payload_json);
-
-    /* JWT payload originates from the OIDC provider: enforce DoS limits
-     * even after signature verification (a valid signature authenticates
-     * the source, not the structural safety of the JSON). */
-    root = nxe_json_parse_untrusted(&json_str, pool);
-    if (!root) {
-        return NGX_ERROR;
-    }
-
-    /* Extract issuer (REQUIRED claim) */
-    value = nxe_json_object_get(root, "iss");
-    if (nxe_json_is_string(value)
-        && nxe_json_string(value, &str_value) == NGX_OK)
-    {
-        claims->issuer = ngx_pcalloc(pool, str_value.len + 1);
-        if (claims->issuer == NULL) {
-            ngx_log_error(NGX_LOG_ERR, pool->log, 0,
-                          "oidc_jwt: failed to allocate memory "
-                          "for issuer claim");
-            nxe_json_free(root);
-            return NGX_ERROR;
-        }
-        ngx_memcpy(claims->issuer, str_value.data, str_value.len);
-    } else {
+    /* iss (REQUIRED) */
+    rc = nxe_jwx_claims_get_string(root, "iss", &str_value);
+    if (rc != NGX_OK) {
         ngx_log_error(NGX_LOG_ERR, pool->log, 0,
                       "oidc_jwt: issuer claim is missing or invalid");
-        nxe_json_free(root);
+        return NGX_ERROR;
+    }
+    claims->issuer = jwt_str_to_cstr(pool, &str_value);
+    if (claims->issuer == NULL) {
+        ngx_log_error(NGX_LOG_ERR, pool->log, 0,
+                      "oidc_jwt: failed to allocate memory for issuer claim");
         return NGX_ERROR;
     }
 
-    /* Extract audience (REQUIRED claim) */
+    /* aud: string OR array */
     value = nxe_json_object_get(root, "aud");
     if (nxe_json_is_string(value)
         && nxe_json_string(value, &str_value) == NGX_OK)
     {
-        claims->audience = ngx_pcalloc(pool, str_value.len + 1);
+        claims->audience = jwt_str_to_cstr(pool, &str_value);
         if (claims->audience == NULL) {
             ngx_log_error(NGX_LOG_ERR, pool->log, 0,
                           "oidc_jwt: failed to allocate memory "
                           "for audience claim");
-            nxe_json_free(root);
             return NGX_ERROR;
         }
-        ngx_memcpy(claims->audience, str_value.data, str_value.len);
 
-        /* Single audience: store as array with one element */
         claims->audiences = ngx_pcalloc(pool, sizeof(char *) * 2);
         if (claims->audiences == NULL) {
-            nxe_json_free(root);
             return NGX_ERROR;
         }
         claims->audiences[0] = claims->audience;
@@ -341,7 +209,6 @@ jwt_parse_claims(const char *payload_json, jwt_claims_t *claims,
         claims->audiences = ngx_pcalloc(pool,
                                         sizeof(char *) * (aud_count + 1));
         if (claims->audiences == NULL) {
-            nxe_json_free(root);
             return NGX_ERROR;
         }
         claims->audience_count = aud_count;
@@ -354,117 +221,81 @@ jwt_parse_claims(const char *payload_json, jwt_claims_t *claims,
                 ngx_log_error(NGX_LOG_ERR, pool->log, 0,
                               "oidc_jwt: audience claim array element "
                               "at index %uz is not a string", i);
-                nxe_json_free(root);
                 return NGX_ERROR;
             }
-            claims->audiences[i] = ngx_pcalloc(pool, str_value.len + 1);
+            claims->audiences[i] = jwt_str_to_cstr(pool, &str_value);
             if (claims->audiences[i] == NULL) {
-                nxe_json_free(root);
                 return NGX_ERROR;
             }
-            ngx_memcpy(claims->audiences[i], str_value.data, str_value.len);
         }
         claims->audiences[aud_count] = NULL;
-
-        /* Set audience to first element for backward compatibility */
         claims->audience = claims->audiences[0];
 
     } else {
         ngx_log_error(NGX_LOG_ERR, pool->log, 0,
                       "oidc_jwt: audience claim is missing or invalid");
-        nxe_json_free(root);
         return NGX_ERROR;
     }
 
-    /* Extract subject (REQUIRED claim) */
-    value = nxe_json_object_get(root, "sub");
-    if (nxe_json_is_string(value)
-        && nxe_json_string(value, &str_value) == NGX_OK)
-    {
-        claims->subject = ngx_pcalloc(pool, str_value.len + 1);
-        if (claims->subject == NULL) {
-            ngx_log_error(NGX_LOG_ERR, pool->log, 0,
-                          "oidc_jwt: failed to allocate memory "
-                          "for subject claim");
-            nxe_json_free(root);
-            return NGX_ERROR;
-        }
-        ngx_memcpy(claims->subject, str_value.data, str_value.len);
-    } else {
+    /* sub (REQUIRED) */
+    rc = nxe_jwx_claims_get_string(root, "sub", &str_value);
+    if (rc != NGX_OK) {
         ngx_log_error(NGX_LOG_ERR, pool->log, 0,
                       "oidc_jwt: subject claim is missing or invalid");
-        nxe_json_free(root);
+        return NGX_ERROR;
+    }
+    claims->subject = jwt_str_to_cstr(pool, &str_value);
+    if (claims->subject == NULL) {
+        ngx_log_error(NGX_LOG_ERR, pool->log, 0,
+                      "oidc_jwt: failed to allocate memory for subject claim");
         return NGX_ERROR;
     }
 
-    /* Extract expiration (REQUIRED claim) */
+    /* exp (REQUIRED) */
     if (jwt_get_time_claim(root, "exp", &claims->expiration, 1, pool)
         != NGX_OK)
     {
-        nxe_json_free(root);
         return NGX_ERROR;
     }
 
-    /* Extract issued_at (REQUIRED claim) */
+    /* iat (REQUIRED) */
     if (jwt_get_time_claim(root, "iat", &claims->issued_at, 1, pool)
         != NGX_OK)
     {
-        nxe_json_free(root);
         return NGX_ERROR;
     }
 
-    /* Extract not_before (OPTIONAL claim) */
+    /* nbf (OPTIONAL) */
     jwt_get_time_claim(root, "nbf", &claims->not_before, 0, pool);
 
-    /* Extract nonce (OPTIONAL claim, but may be required by validation) */
-    value = nxe_json_object_get(root, "nonce");
-    if (nxe_json_is_string(value)
-        && nxe_json_string(value, &str_value) == NGX_OK)
-    {
-        claims->nonce = ngx_pcalloc(pool, str_value.len + 1);
-        if (claims->nonce) {
-            ngx_memcpy(claims->nonce, str_value.data, str_value.len);
-        }
-        /* Note: nonce allocation failure is not fatal, validation will catch
-         * it if nonce is required */
+    /* nonce (OPTIONAL but typically required for ID tokens) */
+    if (nxe_jwx_claims_get_string(root, "nonce", &str_value) == NGX_OK) {
+        claims->nonce = jwt_str_to_cstr(pool, &str_value);
+        /* Nonce allocation failure is not fatal; validation will catch
+         * it if nonce is required. */
     }
 
-    /* Extract auth_time (OPTIONAL claim) */
+    /* auth_time (OPTIONAL) */
     jwt_get_time_claim(root, "auth_time", &claims->auth_time, 0, pool);
 
-    /* Extract at_hash (OPTIONAL claim) */
-    value = nxe_json_object_get(root, "at_hash");
-    if (nxe_json_is_string(value)
-        && nxe_json_string(value, &str_value) == NGX_OK)
-    {
-        claims->at_hash = ngx_pcalloc(pool, str_value.len + 1);
+    /* at_hash (OPTIONAL) */
+    if (nxe_jwx_claims_get_string(root, "at_hash", &str_value) == NGX_OK) {
+        claims->at_hash = jwt_str_to_cstr(pool, &str_value);
         if (claims->at_hash == NULL) {
-            ngx_log_error(NGX_LOG_ERR, ngx_cycle->log, 0,
+            ngx_log_error(NGX_LOG_ERR, pool->log, 0,
                           "oidc_jwt: failed to allocate at_hash");
-        } else {
-            ngx_memcpy(claims->at_hash, str_value.data, str_value.len);
         }
     }
-
-    nxe_json_free(root);
 
     return NGX_OK;
 }
 
-/**
+/*
  * Validate JWT claims against expected values
- *
- * Checks issuer, audience, nonce, expiration (exp), not-before (nbf),
- * issued-at (iat), and at_hash with configurable clock skew tolerance.
- *
- * @param[in] r       HTTP request context for logging
- * @param[in] claims  Parsed JWT claims
- * @param[in] params  Validation parameters (expected values and options)
- *
- * @return JWT_OK if all checks pass, JWT_ERR_* on validation failure
  */
 static jwt_validation_result_t
 jwt_validate_claims(ngx_http_request_t *r, const jwt_claims_t *claims,
+    const char *algorithm,
     const ngx_oidc_jwt_validation_params_t *params)
 {
     time_t now = ngx_time();
@@ -480,7 +311,6 @@ jwt_validate_claims(ngx_http_request_t *r, const jwt_claims_t *claims,
         return JWT_ERR_INVALID_ISSUER;
     }
 
-    /* Validate issuer with exact string match (including length) */
     ngx_log_debug4(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                    "oidc_jwt: validating issuer "
                    "- claims->issuer='%s' (len=%d), expected='%V' (len=%d)",
@@ -500,7 +330,7 @@ jwt_validate_claims(ngx_http_request_t *r, const jwt_claims_t *claims,
         return JWT_ERR_INVALID_ISSUER;
     }
 
-    /* Validate audience (OIDC Core §3.1.3.7: client_id must be in aud) */
+    /* Validate audience (OIDC Core §3.1.3.7) */
     if (!claims->audiences || claims->audience_count == 0
         || !params->expected.audience)
     {
@@ -546,7 +376,6 @@ jwt_validate_claims(ngx_http_request_t *r, const jwt_claims_t *claims,
         return JWT_ERR_TOKEN_EXPIRED;
     }
 
-    /* Check for overflow before addition */
     if (claims->expiration
         > (time_t) (NGX_MAX_INT_T_VALUE - params->clock_skew))
     {
@@ -563,14 +392,13 @@ jwt_validate_claims(ngx_http_request_t *r, const jwt_claims_t *claims,
         return JWT_ERR_TOKEN_EXPIRED;
     }
 
-    /* Check issued_at - reject tokens issued too far in the future */
+    /* Check issued_at */
     if (claims->issued_at == 0) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_jwt: issued_at (iat) claim is missing or zero");
         return JWT_ERR_TOKEN_EXPIRED;
     }
 
-    /* Check for overflow before addition */
     if (now > (time_t) (NGX_MAX_INT_T_VALUE - params->clock_skew)) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_jwt: time value overflow (now=%T, skew=%T)",
@@ -588,7 +416,6 @@ jwt_validate_claims(ngx_http_request_t *r, const jwt_claims_t *claims,
 
     /* Check not_before */
     if (claims->not_before != 0) {
-        /* Check for underflow before subtraction */
         if (claims->not_before < params->clock_skew) {
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                           "oidc_jwt: not_before time underflow "
@@ -605,12 +432,12 @@ jwt_validate_claims(ngx_http_request_t *r, const jwt_claims_t *claims,
             return JWT_ERR_TOKEN_EXPIRED;
         }
     }
+
     /* Validate nonce (mandatory for ID tokens) */
     if (!claims->nonce || !params->expected.nonce) {
         return JWT_ERR_MISSING_CLAIM;
     }
 
-    /* Validate nonce using constant-time comparison */
     if (ngx_strlen(claims->nonce) != params->expected.nonce->len
         || CRYPTO_memcmp(claims->nonce, params->expected.nonce->data,
                          params->expected.nonce->len) != 0)
@@ -622,865 +449,22 @@ jwt_validate_claims(ngx_http_request_t *r, const jwt_claims_t *claims,
     if (params->access_token && params->access_token->len > 0
         && claims->at_hash)
     {
-        /* Extract algorithm from JWT header */
-        ngx_str_t header;
-        nxe_json_t *header_json, *alg_value;
-        ngx_str_t alg_str;
-        char *algorithm = NULL;
-
-        if (ngx_oidc_jwt_decode_header(params->token, &header, r->pool)
-            == NGX_OK)
-        {
-            /* Parse header JSON (provider-originated, apply DoS limits) */
-            header_json = nxe_json_parse_untrusted(&header, r->pool);
-            if (header_json) {
-                alg_value = nxe_json_object_get(header_json, "alg");
-                if (nxe_json_is_string(alg_value)
-                    && nxe_json_string(alg_value, &alg_str) == NGX_OK)
-                {
-                    algorithm = ngx_pcalloc(r->pool, alg_str.len + 1);
-                    if (algorithm) {
-                        ngx_memcpy(algorithm, alg_str.data, alg_str.len);
-                    }
-                }
-
-                if (algorithm) {
-                    /* Validate at_hash with correct algorithm */
-                    if (ngx_oidc_jwt_validate_at_hash(r, algorithm,
-                                                      claims->at_hash,
-                                                      params->access_token)
-                        != NGX_OK)
-                    {
-                        nxe_json_free(header_json);
-                        return JWT_ERR_SIGNATURE_FAILED;
-                    }
-                }
-
-                nxe_json_free(header_json);
-            }
-        }
-
-        /* If algorithm extraction failed, reject token */
-        if (!algorithm) {
+        if (algorithm == NULL || *algorithm == '\0') {
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                           "oidc_jwt: could not extract algorithm from JWT "
                           "header for at_hash validation");
             return JWT_ERR_SIGNATURE_FAILED;
         }
+
+        if (ngx_oidc_jwt_validate_at_hash(r, algorithm, claims->at_hash,
+                                          params->access_token)
+            != NGX_OK)
+        {
+            return JWT_ERR_SIGNATURE_FAILED;
+        }
     }
 
     return JWT_SUCCESS;
-}
-
-/** Context for JWT signature verification iterator */
-typedef struct {
-    ngx_http_request_t *r;
-    const char         *algorithm;
-    const char         *kid_str;
-    /** signed data (header.payload) */
-    struct {
-        u_char *buf;
-        size_t  len;
-    } header_payload;
-    ngx_str_t  *signature_decoded;
-    ngx_int_t   result;
-    /** number of keys tried */
-    ngx_uint_t  key_count;
-} jwt_signature_verify_ctx_t;
-
-static ngx_inline ngx_str_t *
-empty_str(void)
-{
-    static ngx_str_t empty = ngx_string("");
-    return &empty;
-}
-
-/**
- * JWKS key iteration callback for JWT signature verification
- *
- * Attempts to verify the JWT signature using the given JWK key.
- * Supports RSA (RS256/384/512, PS256/384/512), ECDSA (ES256/384/512),
- * and EdDSA algorithms.
- *
- * @param[in] r     HTTP request context
- * @param[in] key   JWKS key to try for verification
- * @param[in] data  jwt_signature_verify_ctx_t context
- *
- * @return NGX_OK if verified (stops iteration), NGX_DECLINED to try next key,
- *         NGX_ERROR on fatal error
- */
-static ngx_int_t
-jwt_verify_key_callback(ngx_http_request_t *r, const ngx_oidc_jwks_key_t *key,
-    void *data)
-{
-    jwt_signature_verify_ctx_t *ctx = data;
-    ngx_str_t *key_kid, *key_alg;
-    ngx_oidc_jwk_type_t key_kty;
-    EVP_PKEY *key_pkey;
-    ngx_int_t result = NGX_OK;
-
-    /* OpenSSL resources (initialized to NULL for cleanup safety) */
-    EVP_MD_CTX *mdctx = NULL;
-    EVP_PKEY_CTX *pkey_ctx = NULL;
-    ECDSA_SIG *ec_sig = NULL;
-    unsigned char *der_sig = NULL;
-    BIGNUM *bn_r = NULL, *bn_s = NULL;
-
-    /* Clear OpenSSL error stack to avoid stale errors */
-    ERR_clear_error();
-
-    key_kid = ngx_oidc_jwks_key_get_kid(key);
-    key_alg = ngx_oidc_jwks_key_get_alg(key);
-    key_kty = ngx_oidc_jwks_key_get_kty(key);
-    key_pkey = ngx_oidc_jwks_key_get_pkey(key);
-
-    /* Check kid match if present in JWT */
-    if (ctx->kid_str && key_kid && key_kid->len > 0) {
-        size_t jwt_kid_len = ngx_strlen(ctx->kid_str);
-        if (jwt_kid_len != key_kid->len
-            || ngx_strncmp(ctx->kid_str,
-                           (char *) key_kid->data, key_kid->len) != 0)
-        {
-            ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                           "oidc_jwt: Key kid mismatch: JWT=%s, key=%V",
-                           ctx->kid_str, key_kid);
-            return NGX_OK; /* Continue to next key */
-        }
-    }
-
-    /* Check algorithm match if present in key */
-    if (key_alg && key_alg->len > 0) {
-        size_t jwt_alg_len = ngx_strlen(ctx->algorithm);
-        if (jwt_alg_len != key_alg->len
-            || ngx_strncmp(ctx->algorithm,
-                           (char *) key_alg->data, key_alg->len) != 0)
-        {
-            ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                           "oidc_jwt: Key alg mismatch: JWT=%s, key=%V",
-                           ctx->algorithm, key_alg);
-            return NGX_OK; /* Continue to next key */
-        }
-    }
-
-    /* Check key type compatibility with algorithm */
-    if (key_kty == NGX_OIDC_JWK_RSA) {
-        if (ngx_strncmp(ctx->algorithm, "RS", 2) != 0
-            && ngx_strncmp(ctx->algorithm, "PS", 2) != 0)
-        {
-            ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                           "oidc_jwt: RSA key incompatible with algorithm: %s",
-                           ctx->algorithm);
-            return NGX_OK; /* Continue to next key */
-        }
-    } else if (key_kty == NGX_OIDC_JWK_EC) {
-        if (ngx_strncmp(ctx->algorithm, "ES", 2) != 0) {
-            ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                           "oidc_jwt: EC key incompatible with algorithm: %s",
-                           ctx->algorithm);
-            return NGX_OK; /* Continue to next key */
-        }
-
-        /* Validate alg-curve compatibility */
-        {
-            ngx_str_t *key_crv = ngx_oidc_jwks_key_get_crv(key);
-
-            if (key_crv == NULL || key_crv->len == 0) {
-                ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                               "oidc_jwt: skipping EC key without crv");
-                return NGX_OK; /* Continue to next key */
-            }
-
-            {
-                ngx_flag_t curve_match = 0;
-
-                if (ngx_strcmp(ctx->algorithm, "ES256") == 0
-                    && key_crv->len == 5
-                    && ngx_strncmp(key_crv->data, "P-256", 5) == 0)
-                {
-                    curve_match = 1;
-                } else if (ngx_strcmp(ctx->algorithm, "ES384") == 0
-                           && key_crv->len == 5
-                           && ngx_strncmp(key_crv->data, "P-384", 5) == 0)
-                {
-                    curve_match = 1;
-                } else if (ngx_strcmp(ctx->algorithm, "ES512") == 0
-                           && key_crv->len == 5
-                           && ngx_strncmp(key_crv->data, "P-521", 5) == 0)
-                {
-                    curve_match = 1;
-                } else if (ngx_strcmp(ctx->algorithm, "ES256K") == 0
-                           && key_crv->len == 9
-                           && ngx_strncmp(key_crv->data, "secp256k1", 9) == 0)
-                {
-                    curve_match = 1;
-                }
-
-                if (!curve_match) {
-                    ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                                   "oidc_jwt: alg-curve mismatch: "
-                                   "alg=%s, crv=%V",
-                                   ctx->algorithm, key_crv);
-                    return NGX_OK; /* Continue to next key */
-                }
-            }
-        }
-    } else if (key_kty == NGX_OIDC_JWK_OKP) {
-        if (ngx_strcmp(ctx->algorithm, "EdDSA") != 0) {
-            ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                           "oidc_jwt: OKP key incompatible with algorithm: %s",
-                           ctx->algorithm);
-            return NGX_OK; /* Continue to next key */
-        }
-    }
-
-    ngx_log_debug3(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                   "oidc_jwt: Trying key: kty=%d, alg=%V, kid=%V", key_kty,
-                   key_alg ? key_alg : empty_str(),
-                   key_kid ? key_kid : empty_str());
-
-    /* Verify signature with this key */
-    if (key_pkey == NULL) {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                      "oidc_jwt: Key has NULL EVP_PKEY");
-        return NGX_OK; /* Continue to next key */
-    }
-
-    /* RSA signature verification */
-    if (key_kty == NGX_OIDC_JWK_RSA) {
-        const EVP_MD *md = NULL;
-
-        /* Get hash algorithm from JWT algorithm name */
-        md = (const EVP_MD *) ngx_oidc_hash_get_md(ctx->algorithm);
-        if (!md) {
-            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                          "oidc_jwt: Unsupported digest algorithm: %s",
-                          ctx->algorithm);
-            result = NGX_ERROR;
-            goto cleanup;
-        }
-
-        mdctx = EVP_MD_CTX_new();
-        if (!mdctx) {
-            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                          "oidc_jwt: Failed to create EVP_MD_CTX");
-            ERR_clear_error();
-            result = NGX_ERROR;
-            goto cleanup;
-        }
-
-        int verify_init_result = EVP_DigestVerifyInit(mdctx, &pkey_ctx,
-                                                      md, NULL, key_pkey);
-        ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                       "oidc_jwt: EVP_DigestVerifyInit returned %d",
-                       verify_init_result);
-
-        if (verify_init_result != 1) {
-            char err_buf[256];
-            jwt_get_openssl_error(err_buf, sizeof(err_buf));
-            ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                           "oidc_jwt: skipping RSA key, "
-                           "EVP_DigestVerifyInit failed: %s", err_buf);
-            ERR_clear_error();
-            /* result = NGX_OK: continue to next key */
-            goto cleanup;
-        }
-
-        /* Handle PSS padding if needed */
-        if (ngx_strncmp(ctx->algorithm, "PS", 2) == 0) {
-            if (EVP_PKEY_CTX_set_rsa_padding(pkey_ctx, RSA_PKCS1_PSS_PADDING)
-                != 1)
-            {
-                ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                              "oidc_jwt: Failed to set RSA PSS padding");
-                ERR_clear_error();
-                result = NGX_ERROR;
-                goto cleanup;
-            }
-            if (EVP_PKEY_CTX_set_rsa_pss_saltlen(pkey_ctx, RSA_PSS_SALTLEN_AUTO)
-                != 1)
-            {
-                ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                              "oidc_jwt: Failed to set RSA PSS saltlen");
-                ERR_clear_error();
-                result = NGX_ERROR;
-                goto cleanup;
-            }
-        }
-
-        ngx_log_debug3(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                       "oidc_jwt: Calling EVP_DigestVerify "
-                       "(sig_len=%uz, msg_len=%uz, alg=%s)",
-                       ctx->signature_decoded->len, ctx->header_payload.len,
-                       ctx->algorithm);
-
-        int verify_result = EVP_DigestVerify(
-            mdctx, ctx->signature_decoded->data,
-            ctx->signature_decoded->len,
-            (unsigned char *) ctx->header_payload.buf,
-            ctx->header_payload.len);
-
-        ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                       "oidc_jwt: EVP_DigestVerify returned %d",
-                       verify_result);
-
-        if (verify_result == 1) {
-            ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                           "oidc_jwt: RSA signature verification succeeded");
-            ctx->result = NGX_OK;
-            result = NGX_DONE; /* Found valid signature, stop */
-            goto cleanup;
-        } else {
-            char err_buf[256];
-            jwt_get_openssl_error(err_buf, sizeof(err_buf));
-            ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                           "oidc_jwt: RSA signature mismatch: %s", err_buf);
-            ERR_clear_error();
-            /* result = NGX_OK: continue to next key */
-            goto cleanup;
-        }
-    } else if (key_kty == NGX_OIDC_JWK_EC) {
-        /* ECDSA signature verification */
-        const EVP_MD *md = NULL;
-
-        /* Get hash algorithm from JWT algorithm name */
-        md = (const EVP_MD *) ngx_oidc_hash_get_md(ctx->algorithm);
-        if (!md) {
-            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                          "oidc_jwt: Unsupported ECDSA algorithm: %s",
-                          ctx->algorithm);
-            result = NGX_ERROR;
-            goto cleanup;
-        }
-
-        int key_bits = EVP_PKEY_bits(key_pkey);
-        if (key_bits <= 0) {
-            ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                           "oidc_jwt: skipping EC key with invalid "
-                           "key size: %d", key_bits);
-            /* result = NGX_OK: continue to next key */
-            goto cleanup;
-        }
-        int coord_size = (key_bits + 7) / 8;
-
-        if (ctx->signature_decoded->len != (size_t) (coord_size * 2)) {
-            ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                           "oidc_jwt: ECDSA signature length mismatch: "
-                           "expected %d, got %uz",
-                           coord_size * 2, ctx->signature_decoded->len);
-            /* result = NGX_OK: continue to next key */
-            goto cleanup;
-        }
-
-        /* JWT signature is R||S format, convert to DER */
-        unsigned char *r_bytes = ctx->signature_decoded->data;
-        unsigned char *s_bytes = ctx->signature_decoded->data + coord_size;
-
-        bn_r = BN_bin2bn(r_bytes, coord_size, NULL);
-        if (!bn_r) {
-            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                          "oidc_jwt: Failed to create BIGNUM for r");
-            ERR_clear_error();
-            result = NGX_ERROR;
-            goto cleanup;
-        }
-
-        bn_s = BN_bin2bn(s_bytes, coord_size, NULL);
-        if (!bn_s) {
-            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                          "oidc_jwt: Failed to create BIGNUM for s");
-            ERR_clear_error();
-            result = NGX_ERROR;
-            goto cleanup;
-        }
-
-        ec_sig = ECDSA_SIG_new();
-        if (!ec_sig) {
-            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                          "oidc_jwt: Failed to create ECDSA_SIG");
-            ERR_clear_error();
-            result = NGX_ERROR;
-            goto cleanup;
-        }
-
-        /* ECDSA_SIG_set0 takes ownership of bn_r and bn_s */
-        if (!ECDSA_SIG_set0(ec_sig, bn_r, bn_s)) {
-            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                          "oidc_jwt: Failed to set ECDSA_SIG parameters");
-            ERR_clear_error();
-            result = NGX_ERROR;
-            goto cleanup;
-        }
-        /* After successful ECDSA_SIG_set0, bn_r and bn_s are owned by ec_sig */
-        bn_r = NULL;
-        bn_s = NULL;
-
-        int der_len = i2d_ECDSA_SIG(ec_sig, &der_sig);
-        if (der_len <= 0 || !der_sig) {
-            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                          "oidc_jwt: Failed to convert ECDSA_SIG to DER");
-            ERR_clear_error();
-            result = NGX_ERROR;
-            goto cleanup;
-        }
-
-        mdctx = EVP_MD_CTX_new();
-        if (!mdctx) {
-            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                          "oidc_jwt: Failed to create EVP_MD_CTX for ECDSA");
-            ERR_clear_error();
-            result = NGX_ERROR;
-            goto cleanup;
-        }
-
-        if (EVP_DigestVerifyInit(mdctx, NULL, md, NULL, key_pkey) != 1) {
-            ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                           "oidc_jwt: skipping EC key, "
-                           "EVP_DigestVerifyInit failed for ECDSA");
-            ERR_clear_error();
-            /* result = NGX_OK: continue to next key */
-            goto cleanup;
-        }
-
-        int verify_result = EVP_DigestVerify(
-            mdctx, der_sig, der_len,
-            (unsigned char *) ctx->header_payload.buf,
-            ctx->header_payload.len);
-
-        if (verify_result == 1) {
-            ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                           "oidc_jwt: ECDSA signature verification succeeded");
-            ctx->result = NGX_OK;
-            result = NGX_DONE; /* Found valid signature, stop */
-            goto cleanup;
-        } else {
-            char err_buf[256];
-            jwt_get_openssl_error(err_buf, sizeof(err_buf));
-            ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                           "oidc_jwt: ECDSA signature mismatch: %s", err_buf);
-            ERR_clear_error();
-            /* result = NGX_OK: continue to next key */
-            goto cleanup;
-        }
-    } else if (key_kty == NGX_OIDC_JWK_OKP) {
-        /* EdDSA signature verification */
-        int key_id = EVP_PKEY_id(key_pkey);
-        if (key_id != EVP_PKEY_ED25519 && key_id != EVP_PKEY_ED448) {
-            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                          "oidc_jwt: Unsupported OKP key type: %d", key_id);
-            result = NGX_ERROR;
-            goto cleanup;
-        }
-
-        mdctx = EVP_MD_CTX_new();
-        if (!mdctx) {
-            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                          "oidc_jwt: Failed to create EVP_MD_CTX for EdDSA");
-            ERR_clear_error();
-            result = NGX_ERROR;
-            goto cleanup;
-        }
-
-        /* EdDSA uses NULL as the digest */
-        if (EVP_DigestVerifyInit(mdctx, NULL, NULL, NULL, key_pkey) != 1) {
-            ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                           "oidc_jwt: skipping OKP key, "
-                           "EVP_DigestVerifyInit failed for EdDSA");
-            ERR_clear_error();
-            /* result = NGX_OK: continue to next key */
-            goto cleanup;
-        }
-
-        int verify_result = EVP_DigestVerify(
-            mdctx, ctx->signature_decoded->data,
-            ctx->signature_decoded->len,
-            (unsigned char *) ctx->header_payload.buf,
-            ctx->header_payload.len);
-
-        if (verify_result == 1) {
-            ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                           "oidc_jwt: EdDSA signature verification succeeded");
-            ctx->result = NGX_OK;
-            result = NGX_DONE; /* Found valid signature, stop */
-            goto cleanup;
-        } else {
-            char err_buf[256];
-            jwt_get_openssl_error(err_buf, sizeof(err_buf));
-            ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                           "oidc_jwt: EdDSA signature mismatch: %s", err_buf);
-            ERR_clear_error();
-            /* result = NGX_OK: continue to next key */
-            goto cleanup;
-        }
-    }
-
-cleanup:
-    /* Clean up OpenSSL resources */
-    /* Note: pkey_ctx is owned by mdctx and will be freed */
-    if (mdctx) {
-        EVP_MD_CTX_free(mdctx);
-    }
-    if (der_sig) {
-        OPENSSL_free(der_sig);
-    }
-    if (ec_sig) {
-        ECDSA_SIG_free(ec_sig);
-    }
-    /* bn_r and bn_s are freed only if ECDSA_SIG_set0 failed */
-    if (bn_r) {
-        BN_free(bn_r);
-    }
-    if (bn_s) {
-        BN_free(bn_s);
-    }
-
-    return result; /* Continue to next key or stop if signature verified */
-}
-
-/**
- * Verify JWT signature using pre-parsed EVP_PKEY from JWKS cache
- *
- * Parses the JWT header to extract algorithm and key ID,
- * then iterates JWKS keys to find a matching key for verification.
- *
- * @param[in] r     HTTP request context
- * @param[in] token JWT string (header.payload.signature)
- * @param[in] jwks  JWKS cache node with pre-parsed EVP_PKEY objects
- * @param[in] pool  Memory pool for temporary allocations
- *
- * @return NGX_OK if signature is valid, NGX_ERROR on failure
- */
-static ngx_int_t
-jwt_verify_signature(ngx_http_request_t *r, ngx_str_t *token,
-    const ngx_oidc_jwks_cache_node_t *jwks, ngx_pool_t *pool)
-{
-    u_char *dot1, *dot2, *header_payload_end;
-    ngx_str_t header_b64, signature_b64;
-    ngx_str_t header_decoded, signature_decoded;
-    nxe_json_t *header_json = NULL;
-    nxe_json_t *alg_value = NULL, *kid_value = NULL;
-    ngx_str_t alg_str_val, kid_str_val;
-    char *algorithm = NULL, *kid_str = NULL;
-    u_char *header_payload_buf = NULL;
-    size_t header_payload_len;
-    jwt_signature_verify_ctx_t verify_ctx;
-    ngx_int_t rc;
-    ngx_uint_t key_count;
-
-    key_count = ngx_oidc_jwks_get_key_count(jwks);
-
-    if (!token || !jwks || token->len == 0 || key_count == 0) {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                      "oidc_jwt: Invalid arguments for signature verification");
-        return NGX_ERROR;
-    }
-
-    /* Enforce token length limit */
-    if (token->len > NGX_OIDC_MAX_JWT_LENGTH) {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                      "oidc_jwt: token too large: %uz", token->len);
-        return NGX_ERROR;
-    }
-
-    ERR_clear_error();
-
-    /* Parse JWT structure: header.payload.signature */
-    dot1 = ngx_strlchr(token->data, token->data + token->len, '.');
-    if (!dot1 || dot1 == token->data) {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                      "oidc_jwt: Invalid JWT format (missing or empty header)");
-        return NGX_ERROR;
-    }
-
-    dot2 = ngx_strlchr(dot1 + 1, token->data + token->len, '.');
-    if (!dot2) {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                      "oidc_jwt: Invalid JWT format (missing second dot)");
-        return NGX_ERROR;
-    }
-
-    /* Reject extra segments (JWE) */
-    if (ngx_strlchr(dot2 + 1, token->data + token->len, '.') != NULL) {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                      "oidc_jwt: JWT has more than 3 segments");
-        return NGX_ERROR;
-    }
-
-    /* Extract header and signature */
-    header_b64.data = token->data;
-    header_b64.len = dot1 - token->data;
-
-    signature_b64.data = dot2 + 1;
-    signature_b64.len = token->data + token->len - (dot2 + 1);
-
-    /* Decode header */
-    header_decoded.len = ngx_base64_decoded_length(header_b64.len);
-    header_decoded.data = ngx_pnalloc(pool, header_decoded.len + 1);
-    if (header_decoded.data == NULL) {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                      "oidc_jwt: Failed to allocate memory for header");
-        return NGX_ERROR;
-    }
-
-    if (ngx_decode_base64url(&header_decoded, &header_b64) != NGX_OK) {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                      "oidc_jwt: Failed to decode JWT header");
-        return NGX_ERROR;
-    }
-
-    /* Parse header JSON (pre-verification, untrusted input) */
-    header_decoded.data[header_decoded.len] = '\0';
-    ngx_str_t header_json_str = { header_decoded.len, header_decoded.data };
-    header_json = nxe_json_parse_untrusted(&header_json_str, pool);
-    if (!header_json) {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                      "oidc_jwt: Failed to parse JWT header JSON");
-        return NGX_ERROR;
-    }
-
-    /* Get algorithm */
-    alg_value = nxe_json_object_get(header_json, "alg");
-    if (!nxe_json_is_string(alg_value)
-        || nxe_json_string(alg_value, &alg_str_val) != NGX_OK)
-    {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                      "oidc_jwt: Missing or invalid 'alg' in JWT header");
-        nxe_json_free(header_json);
-        return NGX_ERROR;
-    }
-
-    algorithm = ngx_pcalloc(pool, alg_str_val.len + 1);
-    if (!algorithm) {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                      "oidc_jwt: Failed to allocate algorithm buffer");
-        nxe_json_free(header_json);
-        return NGX_ERROR;
-    }
-    ngx_memcpy(algorithm, alg_str_val.data, alg_str_val.len);
-
-    /* Validate algorithm against whitelist */
-    if (ngx_oidc_jwt_validate_algorithm(r, algorithm) != NGX_OK) {
-        nxe_json_free(header_json);
-        return NGX_ERROR;
-    }
-
-    /* Get kid (optional) */
-    kid_value = nxe_json_object_get(header_json, "kid");
-    if (nxe_json_is_string(kid_value)
-        && nxe_json_string(kid_value, &kid_str_val) == NGX_OK)
-    {
-        kid_str = ngx_pcalloc(pool, kid_str_val.len + 1);
-        if (kid_str) {
-            ngx_memcpy(kid_str, kid_str_val.data, kid_str_val.len);
-        }
-    }
-
-    ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                   "oidc_jwt: JWT header: alg=%s, kid=%s", algorithm,
-                   kid_str ? kid_str : "(none)");
-
-    /* Calculate header.payload length */
-    header_payload_end = dot2;
-    header_payload_len = header_payload_end - token->data;
-
-    /* Allocate buffer from pool instead of stack */
-    header_payload_buf = ngx_pnalloc(pool, header_payload_len + 1);
-    if (header_payload_buf == NULL) {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                      "oidc_jwt: Failed to allocate memory for header.payload "
-                      "(%uz bytes)", header_payload_len);
-        nxe_json_free(header_json);
-        return NGX_ERROR;
-    }
-
-    ngx_memcpy(header_payload_buf, token->data, header_payload_len);
-    header_payload_buf[header_payload_len] = '\0';
-
-    /* Decode signature */
-    signature_decoded.len = ngx_base64_decoded_length(signature_b64.len);
-    signature_decoded.data = ngx_pnalloc(pool, signature_decoded.len);
-    if (signature_decoded.data == NULL) {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                      "oidc_jwt: Failed to allocate memory for signature");
-        nxe_json_free(header_json);
-        return NGX_ERROR;
-    }
-
-    if (ngx_decode_base64url(&signature_decoded, &signature_b64) != NGX_OK) {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                      "oidc_jwt: Failed to decode JWT signature");
-        nxe_json_free(header_json);
-        return NGX_ERROR;
-    }
-
-    /* Try each key from the JWKS cache */
-    /* Setup verification context */
-    verify_ctx.r = r;
-    verify_ctx.algorithm = algorithm;
-    verify_ctx.kid_str = kid_str;
-    verify_ctx.header_payload.buf = header_payload_buf;
-    verify_ctx.header_payload.len = header_payload_len;
-    verify_ctx.signature_decoded = &signature_decoded;
-    verify_ctx.result = NGX_ERROR;
-    verify_ctx.key_count = key_count;
-
-    /* Iterate through keys and try verification */
-    rc = ngx_oidc_jwks_iterate_keys(r, jwks, jwt_verify_key_callback,
-                                    &verify_ctx);
-
-    nxe_json_free(header_json);
-
-    /* Internal error during iteration: propagate immediately */
-    if (rc == NGX_ERROR) {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                      "oidc_jwt: JWT signature verification aborted "
-                      "due to internal error");
-        return NGX_ERROR;
-    }
-
-    if (verify_ctx.result != NGX_OK) {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                      "oidc_jwt: JWT signature verification failed "
-                      "(tried %ui keys)",
-                      key_count);
-    }
-
-    return verify_ctx.result;
-}
-
-ngx_int_t
-ngx_oidc_jwt_decode_payload(ngx_str_t *token, ngx_str_t *payload,
-    ngx_pool_t *pool)
-{
-    u_char *start, *end, *decoded;
-    ngx_str_t base64_payload;
-    size_t decoded_len;
-
-    /* Validate input parameters */
-    if (token == NULL || payload == NULL || pool == NULL) {
-        if (pool != NULL && pool->log != NULL) {
-            ngx_log_error(NGX_LOG_ERR, pool->log, 0,
-                          "oidc_jwt_decode_payload: NULL parameter");
-        }
-        return NGX_ERROR;
-    }
-
-    /* Enforce token length limit */
-    if (token->len > NGX_OIDC_MAX_JWT_LENGTH) {
-        ngx_log_error(NGX_LOG_ERR, pool->log, 0,
-                      "oidc_jwt: token too large: %uz", token->len);
-        return NGX_ERROR;
-    }
-
-    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, pool->log, 0,
-                   "oidc_jwt: decoding payload, token_len=%uz", token->len);
-
-    /* JWT format: header.payload.signature */
-    /* Find the first dot */
-    start = ngx_strlchr(token->data, token->data + token->len, '.');
-    if (start == NULL) {
-        ngx_log_error(NGX_LOG_ERR, pool->log, 0,
-                      "oidc_jwt: invalid JWT format, first dot not found");
-        return NGX_ERROR;
-    }
-
-    /* Reject empty header segment (e.g. ".payload.sig") */
-    if (start == token->data) {
-        ngx_log_error(NGX_LOG_ERR, pool->log, 0,
-                      "oidc_jwt: invalid JWT format, empty header segment");
-        return NGX_ERROR;
-    }
-
-    start++; /* Skip the dot */
-
-    /* Find the second dot */
-    end = ngx_strlchr(start, token->data + token->len, '.');
-    if (end == NULL) {
-        ngx_log_error(NGX_LOG_ERR, pool->log, 0,
-                      "oidc_jwt: invalid JWT format, second dot not found");
-        return NGX_ERROR;
-    }
-
-    /* Reject extra segments (e.g. JWE 5-segment tokens) */
-    if (ngx_strlchr(end + 1, token->data + token->len, '.') != NULL) {
-        ngx_log_error(NGX_LOG_ERR, pool->log, 0,
-                      "oidc_jwt: JWT has more than 3 segments "
-                      "(JWE tokens are not supported)");
-        return NGX_ERROR;
-    }
-
-    /* Extract payload part */
-    base64_payload.data = start;
-    base64_payload.len = end - start;
-
-    /* Reject empty payload segment (e.g. "header..sig") */
-    if (base64_payload.len == 0) {
-        ngx_log_error(NGX_LOG_ERR, pool->log, 0,
-                      "oidc_jwt: invalid JWT format, empty payload segment");
-        return NGX_ERROR;
-    }
-
-    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, pool->log, 0,
-                   "oidc_jwt: payload base64_len=%uz", base64_payload.len);
-
-    /* Calculate decoded length for base64url */
-    decoded_len = ngx_base64_decoded_length(base64_payload.len);
-    decoded = ngx_pnalloc(pool, decoded_len + 1);
-    if (decoded == NULL) {
-        ngx_log_error(NGX_LOG_ERR, pool->log, 0,
-                      "oidc_jwt: failed to allocate memory for payload");
-        return NGX_ERROR;
-    }
-
-    /* Decode base64url directly */
-    payload->data = decoded;
-    if (ngx_decode_base64url(payload, &base64_payload) != NGX_OK) {
-        ngx_log_error(NGX_LOG_ERR, pool->log, 0,
-                      "oidc_jwt: base64url decode failed for payload");
-        ngx_memzero(decoded, decoded_len + 1);
-        return NGX_ERROR;
-    }
-
-    payload->data[payload->len] = '\0';
-
-    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, pool->log, 0,
-                   "oidc_jwt: payload decoded, len=%uz", payload->len);
-
-    return NGX_OK;
-}
-
-ngx_int_t
-ngx_oidc_jwt_decode_header(ngx_str_t *token, ngx_str_t *header,
-    ngx_pool_t *pool)
-{
-    u_char *end, *decoded;
-    ngx_str_t base64_header;
-    size_t decoded_len;
-
-    /* Find first dot in JWT */
-    end = ngx_strlchr(token->data, token->data + token->len, '.');
-    if (end == NULL) {
-        return NGX_ERROR;
-    }
-
-    /* Extract header part */
-    base64_header.data = token->data;
-    base64_header.len = end - token->data;
-
-    /* Decode base64url */
-    decoded_len = ngx_base64_decoded_length(base64_header.len);
-    decoded = ngx_pnalloc(pool, decoded_len + 1);
-    if (decoded == NULL) {
-        return NGX_ERROR;
-    }
-
-    header->data = decoded;
-    if (ngx_decode_base64url(header, &base64_header) != NGX_OK) {
-        return NGX_ERROR;
-    }
-
-    header->data[header->len] = '\0';
-
-    return NGX_OK;
 }
 
 /*
@@ -1590,17 +574,18 @@ ngx_oidc_jwt_validate_at_hash(ngx_http_request_t *r, const char *algorithm,
 }
 
 /*
- * Uses pre-parsed EVP_PKEY from JWKS cache:
- * - Uses JWKS cache node with pre-parsed EVP_PKEY objects
- * - Performs signature verification and claims validation
- * - Fast path: no JSON parsing required per request
+ * High-level JWT verification using nxe-jwx + OIDC claim policy.
  */
 ngx_int_t
 ngx_oidc_jwt_verify(ngx_http_request_t *r, ngx_str_t *token,
     ngx_oidc_jwks_cache_node_t *jwks_cache,
     const ngx_oidc_jwt_validation_params_t *params)
 {
-    ngx_str_t payload;
+    nxe_jwx_token_t *jwt_token;
+    nxe_jwx_jwks_t *jwks;
+    nxe_json_t *payload_json;
+    const ngx_str_t *alg_str;
+    char *alg_cstr = NULL;
     jwt_claims_t claims;
     jwt_validation_result_t result;
 
@@ -1623,12 +608,28 @@ ngx_oidc_jwt_verify(ngx_http_request_t *r, ngx_str_t *token,
         return NGX_ERROR;
     }
 
+    jwks = ngx_oidc_jwks_cache_node_get_jwx_jwks(jwks_cache);
+    if (jwks == NULL) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                      "oidc_jwt: JWKS cache has no parsed keyset");
+        return NGX_ERROR;
+    }
+
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                    "oidc_jwt: Using JWKS cache with %ui keys",
                    ngx_oidc_jwks_get_key_count(jwks_cache));
 
-    /* Verify signature using pre-parsed EVP_PKEY */
-    if (jwt_verify_signature(r, token, jwks_cache, r->pool) != NGX_OK) {
+    /* Decode the JWT (alg whitelist + "none" rejection happen inside
+     * nxe-jwx). */
+    jwt_token = nxe_jwx_decode(token, r->pool);
+    if (jwt_token == NULL) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                      "oidc_jwt: nxe_jwx_decode failed");
+        return NGX_ERROR;
+    }
+
+    /* Verify signature */
+    if (nxe_jwx_jws_verify(jwt_token, jwks, r->pool) != NGX_OK) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_jwt: JWT signature verification failed");
         return NGX_ERROR;
@@ -1637,26 +638,29 @@ ngx_oidc_jwt_verify(ngx_http_request_t *r, ngx_str_t *token,
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                    "oidc_jwt: JWT signature verified successfully with cache");
 
-    /* Parse JWT payload */
-    if (ngx_oidc_jwt_decode_payload(token, &payload, r->pool) != NGX_OK) {
+    /* Extract payload JSON */
+    payload_json = nxe_jwx_token_payload(jwt_token);
+    if (payload_json == NULL) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                      "oidc_jwt: Failed to decode JWT payload");
+                      "oidc_jwt: token has no payload JSON");
         return NGX_ERROR;
     }
 
-    /* Parse claims from payload */
-    if (jwt_parse_claims((char *) payload.data, &claims, r->pool) != NGX_OK) {
+    /* Parse claims */
+    if (jwt_parse_claims(payload_json, &claims, r->pool) != NGX_OK) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_jwt: Failed to parse JWT claims");
-        ngx_memzero(payload.data, payload.len + 1);
         return NGX_ERROR;
     }
 
-    /* Clear decoded payload to minimize sensitive data residency */
-    ngx_memzero(payload.data, payload.len + 1);
+    /* Algorithm string for at_hash validation */
+    alg_str = nxe_jwx_token_alg(jwt_token);
+    if (alg_str != NULL) {
+        alg_cstr = jwt_str_to_cstr(r->pool, alg_str);
+    }
 
     /* Validate claims */
-    result = jwt_validate_claims(r, &claims, params);
+    result = jwt_validate_claims(r, &claims, alg_cstr, params);
     if (result != JWT_SUCCESS) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_jwt: JWT claims validation failed "

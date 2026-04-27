@@ -9,18 +9,8 @@
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_http.h>
-#include <openssl/evp.h>
-#include <openssl/rsa.h>
-#include <openssl/ec.h>
-#include <openssl/bn.h>
-#include <openssl/param_build.h>
-#include <openssl/core_names.h>
-#include <openssl/err.h>
-#include <openssl/obj_mac.h>
-#include "nxe_json.h"
 
-/** Maximum JWT token length (16 KiB) */
-#define NGX_OIDC_MAX_JWT_LENGTH  16384
+#include "nxe_jwx.h"
 
 typedef struct ngx_oidc_jwks_cache_node_s ngx_oidc_jwks_cache_node_t;
 
@@ -58,34 +48,6 @@ typedef struct {
 } ngx_oidc_jwt_validation_params_t;
 
 /**
- * Decode JWT payload
- *
- * Extracts and Base64url-decodes the JWT payload (second part between dots).
- *
- * @param[in] token    JWT string (header.payload.signature)
- * @param[in] payload  Decoded payload JSON (allocated from pool)
- * @param[in] pool     nginx memory pool
- *
- * @return NGX_OK on success, NGX_ERROR on failure
- */
-ngx_int_t ngx_oidc_jwt_decode_payload(ngx_str_t *token, ngx_str_t *payload,
-    ngx_pool_t *pool);
-
-/**
- * Decode JWT header
- *
- * Extracts and Base64url-decodes the JWT header (first part before dot).
- *
- * @param[in] token   JWT string (header.payload.signature)
- * @param[in] header  Decoded header JSON (allocated from pool)
- * @param[in] pool    nginx memory pool
- *
- * @return NGX_OK on success, NGX_ERROR on failure
- */
-ngx_int_t ngx_oidc_jwt_decode_header(ngx_str_t *token, ngx_str_t *header,
-    ngx_pool_t *pool);
-
-/**
  * Validate at_hash claim
  *
  * Validates the at_hash claim in the ID Token against the access token.
@@ -104,10 +66,13 @@ ngx_int_t ngx_oidc_jwt_validate_at_hash(ngx_http_request_t *r,
 /**
  * High-level JWT verification with JWKS cache (signature + claims)
  *
+ * Decodes the token via nxe-jwx, verifies the signature using the supplied
+ * keyset, and then enforces the OIDC-specific claim policy
+ * (iss / aud / exp / iat / nbf / nonce / at_hash with clock skew).
+ *
  * @param[in] r           Request context for logging
  * @param[in] token       JWT to verify
- * @param[in] jwks_cache  JWKS cache node
- *                        (required, contains pre-parsed EVP_PKEY)
+ * @param[in] jwks_cache  JWKS cache node (required)
  * @param[in] params      Validation parameters (expected values, options)
  *
  * @return NGX_OK if both signature and claims are valid, NGX_ERROR otherwise

@@ -9,24 +9,14 @@
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_http.h>
-#include <openssl/evp.h>
+
+#include "nxe_jwx.h"
 
 /** Maximum JWKS JSON size (256 KiB) */
 #define NGX_OIDC_MAX_JWKS_SIZE  262144
 
 /** Maximum number of keys in JWKS */
 #define NGX_OIDC_MAX_JWKS_KEYS  64
-
-/* JWK key types */
-typedef enum {
-    NGX_OIDC_JWK_UNKNOWN = 0,
-    NGX_OIDC_JWK_RSA,
-    NGX_OIDC_JWK_EC,
-    NGX_OIDC_JWK_OKP
-} ngx_oidc_jwk_type_t;
-
-/* JWKS cache entry structure (single key) */
-typedef struct ngx_oidc_jwks_key_s ngx_oidc_jwks_key_t;
 
 /* JWKS cache node (returned to caller, allocated in request pool) */
 typedef struct ngx_oidc_jwks_cache_node_s ngx_oidc_jwks_cache_node_t;
@@ -87,62 +77,6 @@ void ngx_oidc_jwks_clear_fetch_flag(ngx_http_request_t *r,
     ngx_str_t *jwks_uri);
 
 /**
- * Get EVP_PKEY from JWKS key
- *
- * @param[in] key  JWKS key structure
- *
- * @return EVP_PKEY pointer, or NULL if not available
- */
-EVP_PKEY *ngx_oidc_jwks_key_get_pkey(const ngx_oidc_jwks_key_t *key);
-
-/**
- * Get key ID (kid) from JWKS key
- *
- * @param[in] key  JWKS key structure
- *
- * @return Pointer to kid string
- */
-ngx_str_t *ngx_oidc_jwks_key_get_kid(const ngx_oidc_jwks_key_t *key);
-
-/**
- * Get algorithm (alg) from JWKS key
- *
- * @param[in] key  JWKS key structure
- *
- * @return Pointer to alg string
- */
-ngx_str_t *ngx_oidc_jwks_key_get_alg(const ngx_oidc_jwks_key_t *key);
-
-/**
- * Get key type (kty) from JWKS key
- *
- * @param[in] key  JWKS key structure
- *
- * @return Key type enum value
- */
-ngx_oidc_jwk_type_t ngx_oidc_jwks_key_get_kty(const ngx_oidc_jwks_key_t *key);
-
-/**
- * Get curve name (crv) from JWKS key
- *
- * @param[in] key  JWKS key structure
- *
- * @return Pointer to crv string, or NULL if not an EC key
- */
-ngx_str_t *ngx_oidc_jwks_key_get_crv(const ngx_oidc_jwks_key_t *key);
-
-/**
- * Get JWKS key at specified index from key array
- *
- * @param[in] keys   Array of JWKS keys
- * @param[in] index  Zero-based index
- *
- * @return Pointer to key structure, or NULL if out of bounds
- */
-ngx_oidc_jwks_key_t *ngx_oidc_jwks_key_get_at(const ngx_array_t *keys,
-    ngx_uint_t index);
-
-/**
  * Fetch JWKS via subrequest (async)
  *
  * @param[in] r         HTTP request context
@@ -161,25 +95,13 @@ ngx_int_t ngx_oidc_jwks_fetch(ngx_http_request_t *r, ngx_str_t *jwks_uri,
  * @param[in] jwks_uri   JWKS endpoint URI
  * @param[in] fetched_at Time when JWKS was fetched
  * @param[in] expires_at Time when JWKS cache expires
- * @param[in] jwks_json  Cached JWKS JSON string
+ * @param[in] jwks_json  Cached JWKS JSON string (raw, used for pretty-print)
  * @param[in] data       User data
  *
  * @return NGX_OK to continue, NGX_ERROR to stop
  */
 typedef ngx_int_t (*ngx_oidc_jwks_iterate_pt)(ngx_str_t *jwks_uri,
     time_t fetched_at, time_t expires_at, ngx_str_t *jwks_json, void *data);
-
-/**
- * JWKS key iteration callback
- *
- * @param[in] r     HTTP request context
- * @param[in] key   JWKS key structure
- * @param[in] data  User data
- *
- * @return NGX_OK to continue, NGX_ERROR to stop
- */
-typedef ngx_int_t (*ngx_oidc_jwks_key_iterator_pt)(
-    ngx_http_request_t *r, const ngx_oidc_jwks_key_t *key, void *data);
 
 /**
  * Get JWKS URI from cache node
@@ -239,28 +161,14 @@ void ngx_oidc_jwks_cache_node_set_expires_at(ngx_oidc_jwks_cache_node_t *node,
     time_t expires_at);
 
 /**
- * Get keys array from cache node
+ * Get the underlying nxe-jwx keyset wrapped by this cache node
  *
  * @param[in] node  JWKS cache node
  *
- * @return Array of ngx_oidc_jwks_key_t entries
+ * @return Pointer to the nxe_jwx_jwks_t, or NULL if not parsed
  */
-ngx_array_t *ngx_oidc_jwks_cache_node_get_keys(
+nxe_jwx_jwks_t *ngx_oidc_jwks_cache_node_get_jwx_jwks(
     const ngx_oidc_jwks_cache_node_t *node);
-
-/**
- * Iterate keys in JWKS cache node
- *
- * @param[in] r         HTTP request context
- * @param[in] jwks      JWKS cache node
- * @param[in] iterator  Key iteration callback
- * @param[in] data      User data passed to callback
- *
- * @return NGX_OK on success, NGX_ERROR on failure
- */
-ngx_int_t ngx_oidc_jwks_iterate_keys(ngx_http_request_t *r,
-    const ngx_oidc_jwks_cache_node_t *jwks,
-    ngx_oidc_jwks_key_iterator_pt iterator, void *data);
 
 /**
  * Get number of keys in JWKS cache node
