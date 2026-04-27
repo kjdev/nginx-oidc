@@ -92,7 +92,7 @@ more than three segments
 GET /test-error
 --- error_code: 500
 --- error_log
-empty segment
+empty header or payload segment
 
 === security: empty payload segment rejection
 --- http_config
@@ -121,4 +121,4 @@ empty segment
 GET /test-error
 --- error_code: 500
 --- error_log
-empty segment
+empty header or payload segment
