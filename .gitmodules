@@ -1,6 +1,6 @@
 [submodule "nxe-json"]
 	path = nxe-json
-	url = https://github.com/kjdev/nxe-json.git
+	url = https://github.com/kjdev/nxe-json
 [submodule "nxe-jwx"]
 	path = nxe-jwx
 	url = https://github.com/kjdev/nxe-jwx
