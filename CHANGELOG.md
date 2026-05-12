@@ -1,5 +1,31 @@
 # Changelog
 
+## [04c2060](../../commit/04c2060) - 2026-05-13
+
+### Changed
+
+- Route JWT / JWS / JWKS processing through the `nxe-jwx` submodule
+  - Drop the in-tree algorithm parsing, signature verification, and JWKS public-key construction (`src/ngx_oidc_jwt.c` 1,272 lines, `src/ngx_oidc_jwks.c` 1,114 lines) in favour of `nxe_jwx_decode` / `nxe_jwx_jws_verify` / `nxe_jwx_jwks_parse` (net diff: +298 / −2,543)
+  - Remove the legacy public API (`ngx_oidc_jwt_decode_payload/header`, `ngx_oidc_jwks_key_*`, `ngx_oidc_jwk_type_t`) and migrate every call site onto the opaque `nxe_jwx_token_t` / `nxe_jwx_jwks_t` handles
+  - Hand ID-token payload ownership to nxe-jwx's pool-cleanup lifecycle and drop the bespoke `oidc_variable_json_cleanup`
+
+## [c0e6ab5](../../commit/c0e6ab5) - 2026-05-13
+
+### Changed
+
+- Bump `nxe-json` submodule to `0.3.0`
+  - Add object iteration API (`nxe_json_object_size` / `_iter` / `_iter_next` / `_iter_key` / `_iter_value`)
+  - Keys are returned in insertion order as borrowed `ngx_str_t` views, letting JWKS / userinfo handlers walk claims without leaking jansson types
+
+## [2af955d](../../commit/2af955d) - 2026-05-13
+
+### Added
+
+- Add `nxe-jwx` as a git submodule (v0.1.0)
+  - Shared JWT / JWS / JWKS abstraction layer at `https://github.com/kjdev/nxe-jwx`
+  - `config` sources `nxe-jwx/config.ngx`; nxe-jwx reuses the include path exported by nxe-json, so it must be sourced after `nxe-json/config.ngx`
+  - Build errors out explicitly when the submodule is not initialized
+
 ## [4db1104](../../commit/4db1104) - 2026-04-24
 
 ### Changed
