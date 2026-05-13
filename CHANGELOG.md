@@ -1,5 +1,15 @@
 # Changelog
 
+## [48bbf42](../../commit/48bbf42) - 2026-05-14
+
+### Fixed
+
+- Make JWT claim comparison binary-safe and structurally close the embedded-NUL bypass
+  - Change `jwt_claims_t` iss / aud / sub / nonce / at_hash and the audiences array from `char *` to `ngx_str_t`, and introduce a new internal helper `jwt_str_dup` that copies claim values into the pool with their length preserved (no NUL terminator)
+  - Replace `ngx_strncmp` / `ngx_strlen` comparisons in `jwt_validate_claims` with explicit length-prefixed `ngx_memcmp` (nonce / at_hash still use `CRYPTO_memcmp`). A crafted claim value such as `<valid> <garbage>` can no longer compare equal to its `<valid>` prefix and bypass iss / aud / nonce / at_hash checks
+  - Lift the `at_hash` parameter of `ngx_oidc_jwt_validate_at_hash` from `const char *` to `const ngx_str_t *` and drop the `at_hash_copy` C-string round-trip in `callback_verify_access_token`
+  - Make `jwt_str_dup` failure on an at_hash claim that is present return `NGX_ERROR`, replacing the previous fail-open path that silently skipped at_hash verification on allocation failure
+
 ## [04c2060](../../commit/04c2060) - 2026-05-13
 
 ### Changed
