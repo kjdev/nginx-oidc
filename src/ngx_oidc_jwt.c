@@ -47,17 +47,17 @@ typedef enum {
  * JWT Claims Structure (extracted from the payload).
  */
 typedef struct {
-    char   *issuer;
-    char   *audience;       /* first audience (for backward compat) */
-    char  **audiences;      /* all audiences (NULL-terminated array) */
-    size_t  audience_count;
-    char   *subject;
-    time_t  expiration;
-    time_t  issued_at;
-    time_t  not_before;
-    char   *nonce;
-    time_t  auth_time;
-    char   *at_hash;
+    ngx_str_t  issuer;
+    ngx_str_t  audience;         /* first audience (for backward compat) */
+    ngx_str_t *audiences;        /* array sized by audience_count */
+    size_t     audience_count;
+    ngx_str_t  subject;
+    time_t     expiration;
+    time_t     issued_at;
+    time_t     not_before;
+    ngx_str_t  nonce;
+    time_t     auth_time;
+    ngx_str_t  at_hash;
 } jwt_claims_t;
 
 /*
@@ -99,6 +99,32 @@ jwt_str_to_cstr(ngx_pool_t *pool, const ngx_str_t *src)
     ngx_memcpy(copy, src->data, src->len);
     copy[src->len] = '\0';
     return copy;
+}
+
+/*
+ * Duplicate an ngx_str_t into the pool, preserving length without NUL
+ * termination so claim values stay binary-safe (interior '\0' bytes do
+ * not truncate downstream comparisons).
+ *
+ * Returns NGX_OK on success or NGX_ERROR on allocation failure. An empty
+ * input is a successful no-op (dst stays {NULL, 0}).
+ */
+static ngx_int_t
+jwt_str_dup(ngx_pool_t *pool, ngx_str_t *dst, const ngx_str_t *src)
+{
+    if (src == NULL || src->data == NULL || src->len == 0) {
+        dst->data = NULL;
+        dst->len = 0;
+        return NGX_OK;
+    }
+
+    dst->data = ngx_pnalloc(pool, src->len);
+    if (dst->data == NULL) {
+        return NGX_ERROR;
+    }
+    ngx_memcpy(dst->data, src->data, src->len);
+    dst->len = src->len;
+    return NGX_OK;
 }
 
 /*
@@ -172,8 +198,7 @@ jwt_parse_claims(nxe_json_t *root, jwt_claims_t *claims, ngx_pool_t *pool)
                       "oidc_jwt: issuer claim is missing or invalid");
         return NGX_ERROR;
     }
-    claims->issuer = jwt_str_to_cstr(pool, &str_value);
-    if (claims->issuer == NULL) {
+    if (jwt_str_dup(pool, &claims->issuer, &str_value) != NGX_OK) {
         ngx_log_error(NGX_LOG_ERR, pool->log, 0,
                       "oidc_jwt: failed to allocate memory for issuer claim");
         return NGX_ERROR;
@@ -184,20 +209,18 @@ jwt_parse_claims(nxe_json_t *root, jwt_claims_t *claims, ngx_pool_t *pool)
     if (nxe_json_is_string(value)
         && nxe_json_string(value, &str_value) == NGX_OK)
     {
-        claims->audience = jwt_str_to_cstr(pool, &str_value);
-        if (claims->audience == NULL) {
+        claims->audiences = ngx_pcalloc(pool, sizeof(ngx_str_t));
+        if (claims->audiences == NULL) {
+            return NGX_ERROR;
+        }
+
+        if (jwt_str_dup(pool, &claims->audiences[0], &str_value) != NGX_OK) {
             ngx_log_error(NGX_LOG_ERR, pool->log, 0,
                           "oidc_jwt: failed to allocate memory "
                           "for audience claim");
             return NGX_ERROR;
         }
-
-        claims->audiences = ngx_pcalloc(pool, sizeof(char *) * 2);
-        if (claims->audiences == NULL) {
-            return NGX_ERROR;
-        }
-        claims->audiences[0] = claims->audience;
-        claims->audiences[1] = NULL;
+        claims->audience = claims->audiences[0];
         claims->audience_count = 1;
 
     } else if (nxe_json_is_array(value)
@@ -207,7 +230,7 @@ jwt_parse_claims(nxe_json_t *root, jwt_claims_t *claims, ngx_pool_t *pool)
         size_t i;
 
         claims->audiences = ngx_pcalloc(pool,
-                                        sizeof(char *) * (aud_count + 1));
+                                        sizeof(ngx_str_t) * aud_count);
         if (claims->audiences == NULL) {
             return NGX_ERROR;
         }
@@ -223,12 +246,12 @@ jwt_parse_claims(nxe_json_t *root, jwt_claims_t *claims, ngx_pool_t *pool)
                               "at index %uz is not a string", i);
                 return NGX_ERROR;
             }
-            claims->audiences[i] = jwt_str_to_cstr(pool, &str_value);
-            if (claims->audiences[i] == NULL) {
+            if (jwt_str_dup(pool, &claims->audiences[i], &str_value)
+                != NGX_OK)
+            {
                 return NGX_ERROR;
             }
         }
-        claims->audiences[aud_count] = NULL;
         claims->audience = claims->audiences[0];
 
     } else {
@@ -244,8 +267,7 @@ jwt_parse_claims(nxe_json_t *root, jwt_claims_t *claims, ngx_pool_t *pool)
                       "oidc_jwt: subject claim is missing or invalid");
         return NGX_ERROR;
     }
-    claims->subject = jwt_str_to_cstr(pool, &str_value);
-    if (claims->subject == NULL) {
+    if (jwt_str_dup(pool, &claims->subject, &str_value) != NGX_OK) {
         ngx_log_error(NGX_LOG_ERR, pool->log, 0,
                       "oidc_jwt: failed to allocate memory for subject claim");
         return NGX_ERROR;
@@ -270,20 +292,23 @@ jwt_parse_claims(nxe_json_t *root, jwt_claims_t *claims, ngx_pool_t *pool)
 
     /* nonce (OPTIONAL but typically required for ID tokens) */
     if (nxe_jwx_claims_get_string(root, "nonce", &str_value) == NGX_OK) {
-        claims->nonce = jwt_str_to_cstr(pool, &str_value);
-        /* Nonce allocation failure is not fatal; validation will catch
-         * it if nonce is required. */
+        if (jwt_str_dup(pool, &claims->nonce, &str_value) != NGX_OK) {
+            ngx_log_error(NGX_LOG_ERR, pool->log, 0,
+                          "oidc_jwt: failed to allocate memory for nonce");
+            return NGX_ERROR;
+        }
     }
 
     /* auth_time (OPTIONAL) */
     jwt_get_time_claim(root, "auth_time", &claims->auth_time, 0, pool);
 
-    /* at_hash (OPTIONAL) */
+    /* at_hash (OPTIONAL but fail-closed on copy failure: skipping the copy
+     * would silently bypass at_hash validation in jwt_validate_claims). */
     if (nxe_jwx_claims_get_string(root, "at_hash", &str_value) == NGX_OK) {
-        claims->at_hash = jwt_str_to_cstr(pool, &str_value);
-        if (claims->at_hash == NULL) {
+        if (jwt_str_dup(pool, &claims->at_hash, &str_value) != NGX_OK) {
             ngx_log_error(NGX_LOG_ERR, pool->log, 0,
-                          "oidc_jwt: failed to allocate at_hash");
+                          "oidc_jwt: failed to allocate memory for at_hash");
+            return NGX_ERROR;
         }
     }
 
@@ -305,28 +330,25 @@ jwt_validate_claims(ngx_http_request_t *r, const jwt_claims_t *claims,
     }
 
     /* Validate issuer */
-    if (!claims->issuer || !params->expected.issuer) {
+    if (claims->issuer.len == 0 || !params->expected.issuer) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_jwt: issuer (iss) claim is missing");
         return JWT_ERR_INVALID_ISSUER;
     }
 
-    ngx_log_debug4(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+    ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                    "oidc_jwt: validating issuer "
-                   "- claims->issuer='%s' (len=%d), expected='%V' (len=%d)",
-                   claims->issuer,
-                   claims->issuer ? (int) ngx_strlen(claims->issuer) : 0,
-                   params->expected.issuer,
-                   (int) params->expected.issuer->len);
+                   "- claims->issuer='%V', expected='%V'",
+                   &claims->issuer, params->expected.issuer);
 
-    if (ngx_strncmp(claims->issuer, params->expected.issuer->data,
-                    params->expected.issuer->len) != 0
-        || ngx_strlen(claims->issuer) != params->expected.issuer->len)
+    if (claims->issuer.len != params->expected.issuer->len
+        || ngx_memcmp(claims->issuer.data, params->expected.issuer->data,
+                      params->expected.issuer->len) != 0)
     {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_jwt: issuer validation failed "
-                      "- claims->issuer='%s', expected='%V'",
-                      claims->issuer, params->expected.issuer);
+                      "- claims->issuer='%V', expected='%V'",
+                      &claims->issuer, params->expected.issuer);
         return JWT_ERR_INVALID_ISSUER;
     }
 
@@ -349,11 +371,10 @@ jwt_validate_claims(ngx_http_request_t *r, const jwt_claims_t *claims,
                        claims->audience_count, params->expected.audience);
 
         for (i = 0; i < claims->audience_count; i++) {
-            if (ngx_strlen(claims->audiences[i])
-                == params->expected.audience->len
-                && ngx_strncmp(claims->audiences[i],
-                               params->expected.audience->data,
-                               params->expected.audience->len) == 0)
+            if (claims->audiences[i].len == params->expected.audience->len
+                && ngx_memcmp(claims->audiences[i].data,
+                              params->expected.audience->data,
+                              params->expected.audience->len) == 0)
             {
                 aud_matched = 1;
                 break;
@@ -434,12 +455,12 @@ jwt_validate_claims(ngx_http_request_t *r, const jwt_claims_t *claims,
     }
 
     /* Validate nonce (mandatory for ID tokens) */
-    if (!claims->nonce || !params->expected.nonce) {
+    if (claims->nonce.len == 0 || !params->expected.nonce) {
         return JWT_ERR_MISSING_CLAIM;
     }
 
-    if (ngx_strlen(claims->nonce) != params->expected.nonce->len
-        || CRYPTO_memcmp(claims->nonce, params->expected.nonce->data,
+    if (claims->nonce.len != params->expected.nonce->len
+        || CRYPTO_memcmp(claims->nonce.data, params->expected.nonce->data,
                          params->expected.nonce->len) != 0)
     {
         return JWT_ERR_INVALID_NONCE;
@@ -447,7 +468,7 @@ jwt_validate_claims(ngx_http_request_t *r, const jwt_claims_t *claims,
 
     /* Validate at_hash if access_token provided and at_hash exists */
     if (params->access_token && params->access_token->len > 0
-        && claims->at_hash)
+        && claims->at_hash.len > 0)
     {
         if (algorithm == NULL || *algorithm == '\0') {
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
@@ -456,7 +477,7 @@ jwt_validate_claims(ngx_http_request_t *r, const jwt_claims_t *claims,
             return JWT_ERR_SIGNATURE_FAILED;
         }
 
-        if (ngx_oidc_jwt_validate_at_hash(r, algorithm, claims->at_hash,
+        if (ngx_oidc_jwt_validate_at_hash(r, algorithm, &claims->at_hash,
                                           params->access_token)
             != NGX_OK)
         {
@@ -478,7 +499,7 @@ jwt_validate_claims(ngx_http_request_t *r, const jwt_claims_t *claims,
  */
 ngx_int_t
 ngx_oidc_jwt_validate_at_hash(ngx_http_request_t *r, const char *algorithm,
-    const char *at_hash, ngx_str_t *access_token)
+    const ngx_str_t *at_hash, ngx_str_t *access_token)
 {
     const EVP_MD *md;
     unsigned char hash[EVP_MAX_MD_SIZE];
@@ -496,13 +517,15 @@ ngx_oidc_jwt_validate_at_hash(ngx_http_request_t *r, const char *algorithm,
     /* Clear OpenSSL error stack to avoid stale errors */
     ERR_clear_error();
 
-    if (!algorithm || !at_hash || !access_token || access_token->len == 0) {
+    if (!algorithm || !at_hash || at_hash->len == 0
+        || !access_token || access_token->len == 0)
+    {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_jwt: at_hash validation failed due to "
-                      "invalid parameters (algorithm=%s, at_hash=%s, "
+                      "invalid parameters (algorithm=%s, at_hash_len=%uz, "
                       "access_token=%p, access_token_len=%uz)",
                       algorithm ? algorithm : "(null)",
-                      at_hash ? at_hash : "(null)",
+                      at_hash ? at_hash->len : 0,
                       access_token,
                       access_token ? access_token->len : 0);
         return NGX_ERROR;
@@ -547,27 +570,26 @@ ngx_oidc_jwt_validate_at_hash(ngx_http_request_t *r, const char *algorithm,
     ngx_encode_base64url(&encoded, &hash_str);
 
     /* Compare with at_hash from token using constant-time comparison */
-    size_t at_hash_len = ngx_strlen(at_hash);
-    if (encoded.len != at_hash_len) {
+    if (encoded.len != at_hash->len) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_jwt: at_hash validation failed (length mismatch) "
                       "(algorithm: %s, expected_len: %uz, computed_len: %uz)",
-                      algorithm, at_hash_len, encoded.len);
+                      algorithm, at_hash->len, encoded.len);
         return NGX_ERROR;
     }
 
     /* Use OpenSSL constant-time comparison to prevent timing attacks */
-    if (CRYPTO_memcmp(encoded.data, at_hash, encoded.len) != 0) {
+    if (CRYPTO_memcmp(encoded.data, at_hash->data, encoded.len) != 0) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_jwt: at_hash validation failed (value mismatch) "
-                      "(algorithm: %s, expected: %s, computed: %*s)",
-                      algorithm, at_hash, (int) encoded.len, encoded.data);
+                      "(algorithm: %s, expected: %V, computed: %V)",
+                      algorithm, at_hash, &encoded);
         return NGX_ERROR;
     }
 
     ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                    "oidc_jwt: at_hash validation succeeded "
-                   "(algorithm: %s, hash: %s)",
+                   "(algorithm: %s, hash: %V)",
                    algorithm, at_hash);
 
     return NGX_OK;

@@ -724,7 +724,7 @@ callback_verify_access_token(ngx_http_request_t *r,
     nxe_json_t *payload_json;
     const ngx_str_t *alg_str;
     ngx_str_t at_hash_str;
-    char *at_hash_copy = NULL, *algorithm_copy = NULL;
+    char *algorithm_copy = NULL;
 
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                    "oidc_handler_callback: verifying access_token "
@@ -794,13 +794,9 @@ callback_verify_access_token(ngx_http_request_t *r,
         return NGX_OK; /* No at_hash in ID token, cannot validate */
     }
 
-    /* Copy at_hash into pool with NUL terminator for the validator API */
-    at_hash_copy = string_copy_to_pool(r->pool, &at_hash_str, r, "at_hash");
-    if (!at_hash_copy) {
-        return NGX_ERROR;
-    }
-
-    /* Extract algorithm directly from the decoded header */
+    /* Extract algorithm directly from the decoded header. The algorithm
+     * is whitelisted by nxe-jwx, so converting to a NUL-terminated C
+     * string is safe for ngx_oidc_hash_get_md / ngx_strstr. */
     alg_str = nxe_jwx_token_alg(jwt_token);
     if (alg_str != NULL) {
         algorithm_copy = string_copy_to_pool(r->pool, alg_str, r,
@@ -814,8 +810,9 @@ callback_verify_access_token(ngx_http_request_t *r,
         return NGX_ERROR;
     }
 
-    /* Validate at_hash against access_token */
-    if (ngx_oidc_jwt_validate_at_hash(r, algorithm_copy, at_hash_copy,
+    /* Validate at_hash against access_token (pass ngx_str_t directly to
+     * stay binary-safe; interior '\0' must not truncate comparison). */
+    if (ngx_oidc_jwt_validate_at_hash(r, algorithm_copy, &at_hash_str,
                                       &access_token_value)
         != NGX_OK)
     {

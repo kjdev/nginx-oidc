@@ -61,7 +61,8 @@ typedef struct {
  * @return NGX_OK if valid, NGX_ERROR if mismatch or validation error
  */
 ngx_int_t ngx_oidc_jwt_validate_at_hash(ngx_http_request_t *r,
-    const char *algorithm, const char *at_hash, ngx_str_t *access_token);
+    const char *algorithm, const ngx_str_t *at_hash,
+    ngx_str_t *access_token);
 
 /**
  * High-level JWT verification with JWKS cache (signature + claims)
