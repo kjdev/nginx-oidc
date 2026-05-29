@@ -296,7 +296,7 @@ metadata_shm_save(ngx_http_request_t *r, ngx_str_t *issuer,
     ngx_str_t *src_fields[6];
     ngx_str_t *dest_fields[6];
     u_char *old_data[6];
-    ngx_uint_t i, allocated_count;
+    ngx_uint_t i;
     ngx_int_t rc;
 
     shm = metadata_shm;
@@ -399,7 +399,6 @@ update_cache:
     /* Initialize temporary arrays */
     ngx_memzero(new_data, sizeof(new_data));
     ngx_memzero(old_data, sizeof(old_data));
-    allocated_count = 0;
 
     /* Allocate all required memory (transactional - all or nothing) */
     for (i = 0; i < 6; i++) {
@@ -436,8 +435,6 @@ update_cache:
                 if (dest_fields[i]->data != NULL) {
                     old_data[i] = dest_fields[i]->data;
                 }
-
-                allocated_count++;
             } else {
                 /* Reuse existing memory (size matches) */
                 new_data[i] = dest_fields[i]->data;
