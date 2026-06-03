@@ -1,5 +1,13 @@
 # Changelog
 
+## [39de5c9](../../commit/39de5c9) - 2026-06-03
+
+### Fixed
+
+- Build an absolute `redirect_uri` in the callback token exchange
+  - The callback handler passed `redirect_uri` to `ngx_oidc_url_validate` without converting relative paths to absolute URLs, unlike the authenticate handler. A relative value such as `/oauth2/callback` failed with "URL must start with http:// or https://" during token exchange, even though the authorization request succeeded
+  - Call `ngx_oidc_url_build_absolute` (which validates internally) so the token-request `redirect_uri` matches the one sent in the authorization request, as required by OIDC
+
 ## [48bbf42](../../commit/48bbf42) - 2026-05-14
 
 ### Fixed
