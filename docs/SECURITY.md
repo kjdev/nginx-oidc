@@ -204,8 +204,15 @@ The following size limits are enforced to prevent DoS and buffer processing issu
 |--------|-------|-------|
 | JWT token length | 16 KiB | ID Token, access token |
 | JSON response size | 1 MiB | Token endpoint, UserInfo, etc. |
-| JWKS JSON size | 256 KiB | Response from JWKS endpoint |
-| JWKS key count | 64 | Keys beyond the limit are ignored |
+| JWKS JSON size | 256 KiB | Entire response from JWKS endpoint |
+| JWKS key count | 64 | Exceeding the limit rejects the whole JWKS (see below) |
+
+The JWKS key count limit is enforced in two layers: the generic JSON parser and JWKS processing.
+
+- **JSON parsing layer**: The number of elements in a JSON array is limited to 100 (generic parser DoS protection). If the `keys` array exceeds this, JSON parsing itself fails
+- **JWKS layer**: If the number of parsed keys exceeds 64, the entire JWKS is rejected. Rather than ignoring only the keys beyond the limit, the whole key set used for verification becomes invalid
+
+The smaller of the two values, 64, is the effective limit. Since a legitimate OpenID Provider is not expected to publish more than 64 signing keys at once, this limit comfortably accommodates publishing multiple keys during key rotation.
 
 ### Algorithm Restrictions
 
