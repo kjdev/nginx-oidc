@@ -1,5 +1,14 @@
 # Changelog
 
+## [35e0514](../../commit/35e0514) - 2026-06-03
+
+### Changed
+
+- Bump `nxe-json` submodule `0.3.0` -> `0.5.0`
+  - Add `nxe_json_stringify_compact_sorted` (canonical key-sorted output), NUL-terminate all `nxe_json_stringify_*` output (`data[len] == '\0'`, `len` unchanged), and add the remaining scalar constructors / deep copy (`nxe_json_from_integer` / `_boolean` / `_null`, `nxe_json_deep_copy`) so consumers never reach for jansson directly
+- Bump `nxe-jwx` submodule `0.1.0` -> `0.2.0`
+  - Add `nxe_jwx_jwks_free` for explicit keyset release (prevents key-material leak on pools that survive nginx config reloads), drop the keyval PEM -> HMAC fallback to close a PEM/HMAC algorithm-confusion vector, reject JWKS / keyval entries that declare an empty `kid`, and range-check the RSA modulus by bit length (`NXE_JWX_MIN_RSA_BITS` / `_MAX_RSA_BITS`, default 2048..16384)
+
 ## [39de5c9](../../commit/39de5c9) - 2026-06-03
 
 ### Fixed
