@@ -15,9 +15,6 @@
 /** Maximum JWKS JSON size (256 KiB) */
 #define NGX_OIDC_MAX_JWKS_SIZE  262144
 
-/** Maximum number of keys in JWKS */
-#define NGX_OIDC_MAX_JWKS_KEYS  64
-
 /* JWKS cache node (returned to caller, allocated in request pool) */
 typedef struct ngx_oidc_jwks_cache_node_s ngx_oidc_jwks_cache_node_t;
 
