@@ -338,17 +338,31 @@ callback_exchange_code(ngx_http_request_t *r,
         return NGX_ERROR;
     }
 
-    if (ngx_oidc_url_validate(r, &redirect_uri_val) != NGX_OK) {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                      "oidc_handler_callback: redirect_uri parameter "
-                      "validation failed");
-        return NGX_ERROR;
-    }
     if (redirect_uri_val.len == 0) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_handler_callback: no redirect_uri available "
                       "in server metadata for token exchange");
         return NGX_ERROR;
+    }
+
+    /* Build absolute URL from redirect_uri (handles relative paths).
+     * Must match the redirect_uri sent in the authorization request,
+     * so this mirrors ngx_oidc_handler_authenticate. The helper also
+     * performs URL validation internally. */
+    {
+        ngx_str_t absolute_redirect_uri;
+
+        if (ngx_oidc_url_build_absolute(r, &redirect_uri_val,
+                                        &absolute_redirect_uri)
+            != NGX_OK)
+        {
+            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                          "oidc_handler_callback: redirect_uri parameter "
+                          "validation failed");
+            return NGX_ERROR;
+        }
+
+        redirect_uri_val = absolute_redirect_uri;
     }
 
     /* Get PKCE code_verifier if enabled */
