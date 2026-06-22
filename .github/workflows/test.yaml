@@ -73,7 +73,6 @@ jobs:
             linux-headers \
             lua-resty-http \
             lua-resty-openssl \
-            lua-resty-string \
             make \
             musl-dev \
             nginx \
@@ -85,6 +84,9 @@ jobs:
             py3-cryptography \
             redis \
             zlib-dev
+          # Install only as it conflicts with the openresty package
+          apk fetch lua-resty-string
+          tar -xzvf ./lua-resty-string-*.apk -C /
           cpan -Ti Test::Nginx
         env:
           PERL_MM_USE_DEFAULT: 1
@@ -203,8 +205,8 @@ jobs:
         nginx:
           - alpine
           - ubuntu
-          - '1.30.2' # stable
-          - '1.31.1' # mainline
+          - '1.30.3' # stable
+          - '1.31.2' # mainline
     container:
       image: ${{ matrix.nginx == 'alpine' && 'alpine:latest' || null }}
       options: ${{ matrix.nginx == 'alpine' && '--init' || null }}
