@@ -34,8 +34,7 @@ static char *ngx_http_oidc_validate_provider(ngx_conf_t *cf,
 static char *ngx_http_oidc_validate_session_store(ngx_conf_t *cf,
     ngx_oidc_session_store_t *store);
 static ngx_int_t ngx_http_oidc_search_location_tree(
-    ngx_http_location_tree_node_t *node, ngx_str_t *location_name,
-    ngx_log_t *log);
+    ngx_http_location_tree_node_t *node, ngx_str_t *location_name);
 static ngx_int_t ngx_http_oidc_search_enabled_in_tree(
     ngx_http_location_tree_node_t *node);
 static ngx_int_t ngx_http_oidc_find_location(ngx_conf_t *cf,
@@ -1401,54 +1400,76 @@ static conf_size_min_t ngx_oidc_conf_memory_min = {
 };
 
 /**
- * Recursively search static_locations tree for a location by name
+ * Search static_locations tree for a location with the given full path
  *
- * Helper function that performs depth-first search on the location tree.
+ * The static location tree stores node names relative to the prefix accumulated
+ * along the path from the root: only the inclusive (prefix) subtree advances the
+ * prefix, so a node's name does NOT always retain a leading '/'. Whether the
+ * leading '/' is stripped depends on the surrounding location set (e.g. whether
+ * a root prefix "location /" groups everything beneath it). A flat name
+ * comparison against a pre-stripped search string therefore matches only by
+ * coincidence and fails for valid configurations without a root prefix.
  *
- * @param[in] node           Current tree node
- * @param[in] location_name  Name of the location to find
- * @param[in] log            Log context
+ * This walks the tree exactly like nginx's own ngx_http_core_find_static_location
+ * (src/http/ngx_http_core_module.c): it consumes the path as it descends inclusive
+ * subtrees, so the comparison is always against the correct prefix-relative name.
+ * A match is reported when the full path lands on a node (exact or inclusive),
+ * meaning a location with that path was configured.
  *
- * @return NGX_OK if found, NGX_DECLINED otherwise
+ * @param[in] node           Root of the static location tree
+ * @param[in] location_name  Full location path to find (with leading '/')
+ *
+ * @return NGX_OK if a location with the path exists, NGX_DECLINED otherwise
  */
 static ngx_int_t
 ngx_http_oidc_search_location_tree(ngx_http_location_tree_node_t *node,
-    ngx_str_t *location_name, ngx_log_t *log)
+    ngx_str_t *location_name)
 {
-    if (node == NULL) {
-        return NGX_DECLINED;
-    }
+    u_char    *uri;
+    size_t     len, n;
+    ngx_int_t  rc;
 
-    /* Check current node */
-    if (node->len == location_name->len
-        && ngx_strncmp(node->name, location_name->data,
-                       location_name->len) == 0)
-    {
-        return NGX_OK;
-    }
+    uri = location_name->data;
+    len = location_name->len;
 
-    /* Search left subtree */
-    if (ngx_http_oidc_search_location_tree(node->left, location_name, log)
-        == NGX_OK)
-    {
-        return NGX_OK;
-    }
+    for ( ;; ) {
 
-    /* Search right subtree */
-    if (ngx_http_oidc_search_location_tree(node->right, location_name, log)
-        == NGX_OK)
-    {
-        return NGX_OK;
-    }
+        if (node == NULL) {
+            return NGX_DECLINED;
+        }
 
-    /* Search tree (for regex locations) */
-    if (ngx_http_oidc_search_location_tree(node->tree, location_name, log)
-        == NGX_OK)
-    {
-        return NGX_OK;
-    }
+        n = (len <= (size_t) node->len) ? len : node->len;
 
-    return NGX_DECLINED;
+        rc = ngx_filename_cmp(uri, node->name, n);
+
+        if (rc != 0) {
+            node = (rc < 0) ? node->left : node->right;
+            continue;
+        }
+
+        if (len > (size_t) node->len) {
+
+            if (node->inclusive) {
+                /* descend into the prefix subtree, consuming the matched part */
+                node = node->tree;
+                uri += n;
+                len -= n;
+                continue;
+            }
+
+            /* exact-only node: the remaining path can only be to its right */
+            node = node->right;
+            continue;
+        }
+
+        if (len == (size_t) node->len) {
+            /* the full path matches this node: the location is configured */
+            return NGX_OK;
+        }
+
+        /* len < node->len: the path is shorter, search the left subtree */
+        node = node->left;
+    }
 }
 
 /**
@@ -1519,7 +1540,10 @@ ngx_http_oidc_search_enabled_in_tree(ngx_http_location_tree_node_t *node)
  *
  * Implementation notes:
  * - Searches both named_locations array and static_locations tree
- * - Performs exact string match on location name
+ * - Named locations (with the '@' prefix) are matched by exact string compare
+ * - Static locations are matched by walking the tree with the full path, so the
+ *   lookup is independent of how the tree happens to strip leading prefixes
+ *   (e.g. whether a root prefix "location /" is configured)
  * - Searches all virtual hosts (servers) in the configuration
  */
 static ngx_int_t
@@ -1528,21 +1552,12 @@ ngx_http_oidc_find_location(ngx_conf_t *cf, ngx_str_t *location_name)
     ngx_http_core_main_conf_t *cmcf;
     ngx_http_core_srv_conf_t **cscfp;
     ngx_http_core_loc_conf_t **clcfp;
-    ngx_str_t search_name;
     ngx_uint_t s;
 
     /* Get main HTTP configuration */
     cmcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_core_module);
     if (cmcf == NULL || cmcf->servers.nelts == 0) {
         return NGX_DECLINED;
-    }
-
-    /* Prepare search name
-     * strip leading '/' for static_locations tree search */
-    search_name = *location_name;
-    if (search_name.len > 0 && search_name.data[0] == '/') {
-        search_name.data++;
-        search_name.len--;
     }
 
     /* Search all virtual hosts */
@@ -1570,7 +1585,7 @@ ngx_http_oidc_find_location(ngx_conf_t *cf, ngx_str_t *location_name)
 
             if (clcf && clcf->static_locations) {
                 if (ngx_http_oidc_search_location_tree(clcf->static_locations,
-                                                       &search_name, cf->log)
+                                                       location_name)
                     == NGX_OK)
                 {
                     return NGX_OK;
