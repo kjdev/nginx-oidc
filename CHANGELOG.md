@@ -1,5 +1,15 @@
 # Changelog
 
+## [a061c2c](../../commit/a061c2c) - 2026-06-23
+
+### Fixed
+
+- Evict the memory session store LRU-first so an in-flight authentication keeps its own state
+  - The shared-memory store ordered its queue by expiration and, when full, evicted the soonest-to-expire entry. Pre-auth entries (`state` / `nonce` / `code_verifier` / `original_uri`, ~600s TTL) always expire far earlier than session entries (`id_token` / `access_token` / `userinfo`, session TTL), so once the store reached `memory_max_size` every new authentication evicted its own freshly written `state` / `nonce`, and the callback failed state validation with 401. An nginx reload re-initialized the zone to an empty tree, which is why a reload temporarily restored the flow until the store filled again
+  - Reorder the queue as a true LRU list (head = most recently used): insert new nodes at the head and move nodes to the head on get/update, so in-flight pre-auth entries are never the eviction victim; eviction now drops the least-recently-used (idle) entry from the tail instead
+  - Replace the custom `mem_find_node()` with `ngx_str_rbtree_lookup()` so the search order (hash, length, bytes) matches `ngx_str_rbtree_insert_value()` and cannot miss an existing node on a CRC32 hash collision
+  - Scan a bounded number of tail nodes in `cleanup_expired()` since the queue is no longer ordered by expiration
+
 ## [8ee231b](../../commit/8ee231b) - 2026-06-23
 
 ### Fixed
