@@ -19,7 +19,7 @@ typedef struct {
     ngx_str_t          key;
     ngx_str_t          data;
     time_t             expires;
-    /** LRU/expiration queue link */
+    /** LRU queue link (head = most recently used, tail = least) */
     ngx_queue_t        queue;
 } store_node_t;
 
@@ -92,8 +92,10 @@ mem_validate_store(ngx_http_request_t *r, ngx_oidc_session_store_t *store,
 /**
  * Find node in rbtree by hash and key
  *
- * Searches the rbtree for a node matching the given hash,
- * with string comparison for collision resolution.
+ * Delegates to nginx's ngx_str_rbtree_lookup() so that the search order
+ * matches the insertion order of ngx_str_rbtree_insert_value() exactly
+ * (hash, then key length, then byte comparison). store_node_t is laid out
+ * to be compatible with ngx_str_node_t (rbtree node first, key second).
  *
  * @param[in] octx  Shared memory zone context
  * @param[in] hash  CRC32 hash of the key
@@ -104,72 +106,22 @@ mem_validate_store(ngx_http_request_t *r, ngx_oidc_session_store_t *store,
 static store_node_t *
 mem_find_node(shm_zone_t *octx, uint32_t hash, ngx_str_t *key)
 {
-    ngx_rbtree_node_t *node, *sentinel;
-    store_node_t *ocn;
-    ngx_int_t rc;
+    ngx_str_node_t *sn;
 
-    node = octx->rbtree.root;
-    sentinel = octx->rbtree.sentinel;
-
-    while (node != sentinel) {
-        if (hash < node->key) {
-            node = node->left;
-        } else if (hash > node->key) {
-            node = node->right;
-        } else {
-            /* Hash match, check actual key */
-            ocn = (store_node_t *) (
-                (u_char *) node - offsetof(store_node_t, rbtree_node));
-
-            /* Compare keys */
-            rc = ngx_memn2cmp(key->data, ocn->key.data,
-                              key->len, ocn->key.len);
-
-            if (rc == 0) {
-                /* Exact match found */
-                return ocn;
-            }
-
-            /* Hash collision: continue searching based on key comparison */
-            node = (rc < 0) ? node->left : node->right;
-        }
+    sn = ngx_str_rbtree_lookup(&octx->rbtree, key, hash);
+    if (sn == NULL) {
+        return NULL;
     }
 
-    return NULL;
-}
-
-/*
- * Insert node into expire queue sorted by expiration time.
- * Tail has the earliest expiration, head has the latest.
- */
-static void
-mem_queue_insert_expire(ngx_queue_t *expire_queue, store_node_t *ocn)
-{
-    ngx_queue_t *q;
-    store_node_t *cur;
-
-    /* Walk from tail (earliest expiration) to find insertion point */
-    for (q = ngx_queue_last(expire_queue);
-         q != ngx_queue_sentinel(expire_queue);
-         q = ngx_queue_prev(q))
-    {
-        cur = ngx_queue_data(q, store_node_t, queue);
-        if (cur->expires <= ocn->expires) {
-            /* Insert after this entry (closer to head) */
-            ngx_queue_insert_after(q, &ocn->queue);
-            return;
-        }
-    }
-
-    /* This entry has the earliest expiration - insert at tail */
-    ngx_queue_insert_head(expire_queue, &ocn->queue);
+    return (store_node_t *) (
+        (u_char *) sn - offsetof(store_node_t, rbtree_node));
 }
 
 /**
  * Update existing node with new value and expiration
  *
- * Replaces the node's value in shared memory slab, updating
- * the expiration queue position.
+ * Replaces the node's value in shared memory slab and moves the
+ * node to the LRU head (most recently used).
  *
  * @param[in] octx     Shared memory zone context
  * @param[in] ocn      Node to update
@@ -200,9 +152,9 @@ mem_update_node(shm_zone_t *octx, store_node_t *ocn,
     ocn->data.len = value->len;
     ocn->expires = expires;
 
-    /* Reinsert into expire queue at correct sorted position */
+    /* Move to LRU head: this entry was just accessed (written) */
     ngx_queue_remove(&ocn->queue);
-    mem_queue_insert_expire(&octx->expire_queue, ocn);
+    ngx_queue_insert_head(&octx->expire_queue, &ocn->queue);
 
     return NGX_OK;
 }
@@ -211,8 +163,7 @@ mem_update_node(shm_zone_t *octx, store_node_t *ocn,
  * Create and insert new node into rbtree and expiration queue
  *
  * Allocates node, key, and value from shared memory slab,
- * inserts into the rbtree, and adds to the expiration queue.
- * Performs LRU eviction if slab allocation fails.
+ * inserts into the rbtree, and adds to the LRU head of the queue.
  *
  * @param[in] octx     Shared memory zone context
  * @param[in] hash     CRC32 hash of the key
@@ -260,9 +211,9 @@ mem_create_node(shm_zone_t *octx, uint32_t hash, ngx_str_t *key,
     ocn->data.len = value->len;
     ocn->expires = expires;
 
-    /* Insert into rbtree and expire queue (sorted by expiration) */
+    /* Insert into rbtree and at the LRU head (most recently used) */
     ngx_rbtree_insert(&octx->rbtree, node);
-    mem_queue_insert_expire(&octx->expire_queue, ocn);
+    ngx_queue_insert_head(&octx->expire_queue, &ocn->queue);
     octx->count++;
 
     return NGX_OK;
@@ -282,7 +233,14 @@ mem_remove_node(shm_zone_t *octx, store_node_t *ocn)
 
 /*
  * Evict entries to make room when at max_size (called with lock held).
- * First removes expired entries, then evicts oldest if still at limit.
+ *
+ * The expire_queue is ordered by recency of use (head = most recently used,
+ * tail = least recently used), so eviction must target the tail. This keeps
+ * in-flight, freshly created entries (e.g. state/nonce/code_verifier during
+ * an active authentication) safe, since they are at the head right after
+ * creation. Expired entries that happen to sit at the LRU tail are reclaimed
+ * first as a cheap best-effort; the periodic cleanup and per-get expiry checks
+ * handle the rest.
  */
 static void
 mem_evict_if_needed(shm_zone_t *octx)
@@ -297,9 +255,9 @@ mem_evict_if_needed(shm_zone_t *octx)
 
     now = ngx_time();
 
-    /* Remove expired entries first */
-    while (!ngx_queue_empty(&octx->expire_queue)
-           && octx->count >= octx->max_size)
+    /* Best-effort: reclaim expired entries sitting at the LRU tail */
+    while (octx->count >= octx->max_size
+           && !ngx_queue_empty(&octx->expire_queue))
     {
         q = ngx_queue_last(&octx->expire_queue);
         ocn = ngx_queue_data(q, store_node_t, queue);
@@ -311,7 +269,7 @@ mem_evict_if_needed(shm_zone_t *octx)
         mem_remove_node(octx, ocn);
     }
 
-    /* If still at limit, evict the oldest entry */
+    /* If still at limit, evict the least-recently-used entry (queue tail) */
     if (octx->count >= octx->max_size
         && !ngx_queue_empty(&octx->expire_queue))
     {
@@ -519,9 +477,9 @@ ngx_oidc_session_store_memory_get(ngx_http_request_t *r,
     }
     ngx_memcpy(value->data, ocn->data.data, value->len);
 
-    /* Reinsert into expire queue at correct sorted position */
+    /* Move to LRU head: this entry was just accessed (read) */
     ngx_queue_remove(&ocn->queue);
-    mem_queue_insert_expire(&octx->expire_queue, ocn);
+    ngx_queue_insert_head(&octx->expire_queue, &ocn->queue);
 
     ngx_shmtx_unlock(&octx->shpool->mutex);
     return NGX_OK;
@@ -565,10 +523,10 @@ ngx_oidc_session_store_memory_cleanup_expired(ngx_http_request_t *r,
     ngx_oidc_session_store_t *store)
 {
     shm_zone_t *octx;
-    ngx_queue_t *q;
+    ngx_queue_t *q, *prev;
     store_node_t *ocn;
     time_t now;
-    ngx_uint_t n = 0;
+    ngx_uint_t scanned = 0;
 
     if (mem_validate_store(r, store, &octx) != NGX_OK) {
         return NGX_ERROR;
@@ -578,17 +536,23 @@ ngx_oidc_session_store_memory_cleanup_expired(ngx_http_request_t *r,
 
     ngx_shmtx_lock(&octx->shpool->mutex);
 
-    while (!ngx_queue_empty(&octx->expire_queue) && n < 128) {
-        q = ngx_queue_last(&octx->expire_queue);
+    /*
+     * The queue is ordered by recency of use, not by expiration, so we cannot
+     * stop at the first non-expired entry. Walk a bounded number of nodes from
+     * the LRU tail (where stale entries accumulate) and drop expired ones.
+     */
+    q = ngx_queue_last(&octx->expire_queue);
+
+    while (q != ngx_queue_sentinel(&octx->expire_queue) && scanned < 128) {
+        prev = ngx_queue_prev(q);
         ocn = ngx_queue_data(q, store_node_t, queue);
 
-        if (ocn->expires >= now) {
-            break;
+        if (ocn->expires < now) {
+            mem_remove_node(octx, ocn);
         }
 
-        /* Remove expired node */
-        mem_remove_node(octx, ocn);
-        n++;
+        q = prev;
+        scanned++;
     }
 
     ngx_shmtx_unlock(&octx->shpool->mutex);
