@@ -81,10 +81,18 @@ authenticate_build_auth_url(ngx_http_request_t *r,
         return NULL;
     }
 
-    /* Get redirect_uri from provider */
-    if (ngx_http_complex_value(r, provider->redirect_uri, &redirect_uri)
-        != NGX_OK)
+    /* Get redirect_uri from provider.
+     * redirect_uri is optional: when unset, fall back to the built-in
+     * default callback path so the authorization request still carries a
+     * usable redirect_uri instead of dereferencing a NULL complex value. */
+    if (provider->redirect_uri == NULL) {
+        ngx_str_set(&redirect_uri, NGX_OIDC_DEFAULT_CALLBACK_PATH);
+    } else if (ngx_http_complex_value(r, provider->redirect_uri, &redirect_uri)
+               != NGX_OK)
     {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                      "oidc_handler_authenticate: failed to "
+                      "evaluate redirect_uri");
         return NULL;
     }
 

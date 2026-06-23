@@ -313,25 +313,28 @@ callback_exchange_code(ngx_http_request_t *r,
         return NGX_ERROR;
     }
 
-    /* Get client_secret value */
+    /* Get client_secret value.
+     * client_secret is optional: a public client using PKCE has no secret.
+     * When unset, leave the value empty and omit it from the token request
+     * rather than failing the exchange. */
     cv = provider->client_secret;
     if (cv == NULL) {
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                      "oidc_handler_callback: client_secret not configured "
-                      "for provider");
-        return NGX_ERROR;
-    }
-    if (ngx_http_complex_value(r, cv, &client_secret_val) != NGX_OK) {
+        ngx_str_null(&client_secret_val);
+    } else if (ngx_http_complex_value(r, cv, &client_secret_val) != NGX_OK) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_handler_callback: failed to get "
                       "client_secret value");
         return NGX_ERROR;
     }
 
-    /* Get processed redirect_uri from server metadata */
-    /* Get redirect_uri from provider */
-    if (ngx_http_complex_value(r, provider->redirect_uri,
-                               &redirect_uri_val) != NGX_OK)
+    /* Get redirect_uri from provider.
+     * redirect_uri is optional: when unset, fall back to the built-in
+     * default callback path so the value matches the one sent in the
+     * authorization request and avoids a NULL complex value dereference. */
+    if (provider->redirect_uri == NULL) {
+        ngx_str_set(&redirect_uri_val, NGX_OIDC_DEFAULT_CALLBACK_PATH);
+    } else if (ngx_http_complex_value(r, provider->redirect_uri,
+                                      &redirect_uri_val) != NGX_OK)
     {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_handler_callback: failed to evaluate redirect_uri");
@@ -406,13 +409,17 @@ callback_exchange_code(ngx_http_request_t *r,
     ngx_unescape_uri(&dst, &src, code->len, NGX_UNESCAPE_URI);
     decoded_code.len = dst - decoded_code.data;
 
-    /* URL encode parameters */
+    /* URL encode parameters. client_secret is encoded only when configured;
+     * a public client omits it from the token request entirely. */
+    ngx_str_null(&encoded_client_secret);
+
     if (ngx_oidc_url_encode(r, &client_id_val, &encoded_client_id) != NGX_OK
-        || ngx_oidc_url_encode(r, &client_secret_val,
-                               &encoded_client_secret) != NGX_OK
         || ngx_oidc_url_encode(r, &redirect_uri_val,
                                &encoded_redirect_uri) != NGX_OK
-        || ngx_oidc_url_encode(r, &decoded_code, &encoded_code) != NGX_OK)
+        || ngx_oidc_url_encode(r, &decoded_code, &encoded_code) != NGX_OK
+        || (provider->client_secret != NULL
+            && ngx_oidc_url_encode(r, &client_secret_val,
+                                   &encoded_client_secret) != NGX_OK))
     {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_handler_callback: failed to encode parameters "
@@ -432,12 +439,16 @@ callback_exchange_code(ngx_http_request_t *r,
         }
     }
 
-    /* Build POST body */
+    /* Build POST body. client_secret is appended only for confidential
+     * clients; public (PKCE) clients omit it. */
     len = sizeof("grant_type=authorization_code") - 1 + sizeof("&code=") - 1
           + encoded_code.len + sizeof("&redirect_uri=") - 1
           + encoded_redirect_uri.len + sizeof("&client_id=") - 1
-          + encoded_client_id.len + sizeof("&client_secret=") - 1
-          + encoded_client_secret.len;
+          + encoded_client_id.len;
+
+    if (provider->client_secret != NULL) {
+        len += sizeof("&client_secret=") - 1 + encoded_client_secret.len;
+    }
 
     /* Add PKCE code_verifier length if enabled */
     if (provider->pkce.enable && code_verifier_val.len > 0) {
@@ -460,8 +471,11 @@ callback_exchange_code(ngx_http_request_t *r,
     p = ngx_cpymem(p, encoded_redirect_uri.data, encoded_redirect_uri.len);
     p = ngx_cpymem(p, "&client_id=", sizeof("&client_id=") - 1);
     p = ngx_cpymem(p, encoded_client_id.data, encoded_client_id.len);
-    p = ngx_cpymem(p, "&client_secret=", sizeof("&client_secret=") - 1);
-    p = ngx_cpymem(p, encoded_client_secret.data, encoded_client_secret.len);
+    if (provider->client_secret != NULL) {
+        p = ngx_cpymem(p, "&client_secret=", sizeof("&client_secret=") - 1);
+        p = ngx_cpymem(p, encoded_client_secret.data,
+                       encoded_client_secret.len);
+    }
 
     /* Append PKCE code_verifier if enabled */
     if (provider->pkce.enable && code_verifier_val.len > 0) {
