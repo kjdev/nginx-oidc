@@ -1,5 +1,14 @@
 # Changelog
 
+## [e700345](../../commit/e700345) - 2026-06-23
+
+### Fixed
+
+- Treat `client_secret` and `redirect_uri` as optional `oidc_provider` options
+  - Both are documented as optional, but the handlers dereferenced them unconditionally. With `redirect_uri` unset, `ngx_http_complex_value(r, NULL, ...)` dereferenced a NULL complex value in the authenticate and callback handlers and crashed the worker (SIGSEGV); `client_secret` unset failed the token exchange even for a PKCE public client
+  - `redirect_uri`: fall back to the built-in default callback path (`/oidc_callback`) when unset, matching the callback-detection default already used at request dispatch, so the authorization redirect and token exchange both operate on that path
+  - `client_secret`: omit it from the token endpoint request when unset (public client using PKCE) instead of failing; an empty `&client_secret=` is never sent
+
 ## [a061c2c](../../commit/a061c2c) - 2026-06-23
 
 ### Fixed
