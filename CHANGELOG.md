@@ -1,5 +1,13 @@
 # Changelog
 
+## [560d0b9](../../commit/560d0b9) - 2026-06-24
+
+### Fixed
+
+- Match required internal locations by full path, independent of a root prefix
+  - `ngx_http_oidc_find_location` stripped the leading `/` from the search name and compared it against static location tree node names. Tree node names are relative to the prefix accumulated along the path, and only the inclusive (prefix) subtree advances that prefix, so whether a node name keeps its leading `/` depends on the surrounding location set. With a root prefix `location /` grouping everything beneath it the `/` was stripped and the search matched by coincidence; without it, top-level node names retained the `/` and `/_oidc_http_fetch` was never found, failing startup with `emerg: OIDC module requires internal location "/_oidc_http_fetch" to be configured`
+  - Walk the static location tree with the full path exactly like nginx's own `ngx_http_core_find_static_location`: consume the path while descending inclusive subtrees so the comparison is always against the correct prefix-relative name. A location is reported as configured when the full path lands on a node. This also fixes the more general case of nested inclusive prefixes (e.g. `location /_oidc` alongside `/_oidc_http_fetch`)
+
 ## [e700345](../../commit/e700345) - 2026-06-23
 
 ### Fixed
