@@ -23,9 +23,6 @@ __DATA__
 --- config
     include $TEST_NGINX_CONF_DIR/location-fetch.conf;
 
-    # A prefix "location /" is required so the static location tree is built
-    # such that the module can find the internal /_oidc_http_fetch location at
-    # config time (see ngx_http_oidc_find_location).
     location / {
         auth_oidc off;
         return 200 "root";
