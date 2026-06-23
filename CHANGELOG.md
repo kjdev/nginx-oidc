@@ -1,5 +1,14 @@
 # Changelog
 
+## [8ee231b](../../commit/8ee231b) - 2026-06-23
+
+### Fixed
+
+- Initialize the inserted node's links in the metadata / JWKS shared-memory rbtree insert callbacks
+  - `metadata_rbtree_insert` and `jwks_rbtree_insert_value` linked the new node into its parent but never set the node's own `parent` / `left` / `right` pointers, violating the `ngx_rbtree_insert()` contract whose rebalancing step dereferences `node->parent`. Since nodes come from non-zeroed slab memory, `node->parent` held garbage and the rebalance crashed the worker (SIGSEGV) inside the locked critical section, leaving the shared memory zone locked
+  - The first insertion into an empty tree is handled directly by `ngx_rbtree_insert`, so the crash only surfaced on the second and later insertions — i.e. with multiple providers using distinct `issuer` / `jwks_uri` values
+  - Set `node->parent` / `left` / `right` after the insertion loop as required by the contract (the duplicate-key branch is unreachable because `shm_save` searches for an existing entry under the same lock before inserting)
+
 ## [35e0514](../../commit/35e0514) - 2026-06-03
 
 ### Changed
