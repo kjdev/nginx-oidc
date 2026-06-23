@@ -128,6 +128,16 @@ metadata_rbtree_insert(ngx_rbtree_node_t *temp, ngx_rbtree_node_t *node,
         }
     }
 
+    /*
+     * Initialize the inserted node's own links as required by the
+     * ngx_rbtree_insert() contract. The rebalancing step dereferences
+     * node->parent, so leaving these uninitialized (slab memory is not
+     * zeroed) causes a crash on the second and later insertions.
+     */
+    node->parent = temp;
+    node->left = sentinel;
+    node->right = sentinel;
+
     ngx_rbt_red(node);
 }
 
