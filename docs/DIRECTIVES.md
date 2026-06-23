@@ -153,7 +153,7 @@ Syntax:  client_secret <secret>;
 Default: —
 ```
 
-The OAuth 2.0 client secret. Required for Confidential Clients.
+The OAuth 2.0 client secret. Required for Confidential Clients. It may be omitted for Public Clients that use PKCE. When omitted, `client_secret` is not included in the request to the token endpoint.
 
 The client secret is sensitive information. Protect it appropriately.
 
@@ -172,10 +172,10 @@ When explicitly specifying a session store, it must be previously defined with `
 
 ```
 Syntax:  redirect_uri <uri>;
-Default: —
+Default: /oidc_callback
 ```
 
-The OAuth 2.0 redirect URI. Specify a relative path (e.g., `/oauth2/callback`) or an absolute URL (e.g., `https://app.example.com/oauth2/callback`). This is used to construct the authorization URL in the authentication flow (`auth_oidc_mode require`), so it must be set in environments that require authentication redirects. If not set, the default path `/oidc_callback` is used for callback detection, but authentication redirects will not work correctly.
+The OAuth 2.0 redirect URI. Specify a relative path (e.g., `/oauth2/callback`) or an absolute URL (e.g., `https://app.example.com/oauth2/callback`). This is used to construct the authorization URL in the authentication flow (`auth_oidc_mode require`). If not set, the built-in default path `/oidc_callback` is used, and both the authentication redirect and callback detection operate on that path. Because the value must match the redirect URI registered with the provider, set it explicitly when using a path other than `/oidc_callback`.
 
 #### config_url
 
