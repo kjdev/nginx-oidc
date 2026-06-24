@@ -1270,8 +1270,17 @@ ngx_http_oidc_validate_provider(ngx_conf_t *cf,
      * removing the defense against authorization code interception. A public
      * client must keep PKCE enabled; a confidential client must provide a
      * client_secret. pkce.enable is already resolved to its default at this
-     * point (see ngx_http_oidc_init_main_conf). */
-    if (provider->client_secret == NULL && !provider->pkce.enable) {
+     * point (see ngx_http_oidc_init_main_conf).
+     * A constant empty client_secret ("") is treated as unset here: it is
+     * non-NULL but carries no secret, so it would reproduce the same insecure
+     * shape. A value referencing a variable cannot be evaluated at config time
+     * (value.len > 0 for the unparsed text), so a variable resolving to empty
+     * at runtime is the operator's responsibility; the callback handler omits
+     * an empty client_secret from the token request regardless. */
+    if ((provider->client_secret == NULL
+         || provider->client_secret->value.len == 0)
+        && !provider->pkce.enable)
+    {
         ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
                            "oidc provider \"%V\": insecure configuration: "
                            "\"client_secret\" is unset and \"pkce\" is off; "

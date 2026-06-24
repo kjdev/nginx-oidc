@@ -409,15 +409,17 @@ callback_exchange_code(ngx_http_request_t *r,
     ngx_unescape_uri(&dst, &src, code->len, NGX_UNESCAPE_URI);
     decoded_code.len = dst - decoded_code.data;
 
-    /* URL encode parameters. client_secret is encoded only when configured;
-     * a public client omits it from the token request entirely. */
+    /* URL encode parameters. client_secret is encoded only when it resolves
+     * to a non-empty value; a public client (or a value that resolves to
+     * empty) omits it from the token request entirely so that an empty
+     * &client_secret= is never sent. */
     ngx_str_null(&encoded_client_secret);
 
     if (ngx_oidc_url_encode(r, &client_id_val, &encoded_client_id) != NGX_OK
         || ngx_oidc_url_encode(r, &redirect_uri_val,
                                &encoded_redirect_uri) != NGX_OK
         || ngx_oidc_url_encode(r, &decoded_code, &encoded_code) != NGX_OK
-        || (provider->client_secret != NULL
+        || (client_secret_val.len > 0
             && ngx_oidc_url_encode(r, &client_secret_val,
                                    &encoded_client_secret) != NGX_OK))
     {
@@ -439,14 +441,14 @@ callback_exchange_code(ngx_http_request_t *r,
         }
     }
 
-    /* Build POST body. client_secret is appended only for confidential
-     * clients; public (PKCE) clients omit it. */
+    /* Build POST body. client_secret is appended only when it resolves to a
+     * non-empty value; public (PKCE) clients and empty values omit it. */
     len = sizeof("grant_type=authorization_code") - 1 + sizeof("&code=") - 1
           + encoded_code.len + sizeof("&redirect_uri=") - 1
           + encoded_redirect_uri.len + sizeof("&client_id=") - 1
           + encoded_client_id.len;
 
-    if (provider->client_secret != NULL) {
+    if (encoded_client_secret.len > 0) {
         len += sizeof("&client_secret=") - 1 + encoded_client_secret.len;
     }
 
@@ -471,7 +473,7 @@ callback_exchange_code(ngx_http_request_t *r,
     p = ngx_cpymem(p, encoded_redirect_uri.data, encoded_redirect_uri.len);
     p = ngx_cpymem(p, "&client_id=", sizeof("&client_id=") - 1);
     p = ngx_cpymem(p, encoded_client_id.data, encoded_client_id.len);
-    if (provider->client_secret != NULL) {
+    if (encoded_client_secret.len > 0) {
         p = ngx_cpymem(p, "&client_secret=", sizeof("&client_secret=") - 1);
         p = ngx_cpymem(p, encoded_client_secret.data,
                        encoded_client_secret.len);
