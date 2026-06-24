@@ -1,5 +1,14 @@
 # Changelog
 
+## [5c9a282](../../commit/5c9a282) - 2026-06-25
+
+### Fixed
+
+- Treat an empty `client_secret` as unset to close a startup-check bypass
+  - A literal empty string (`client_secret "";`) is non-NULL, so the startup guard that rejects "no `client_secret` with `pkce off`" let it pass, and the callback then sent an empty `&client_secret=` with PKCE still off, reproducing the insecure unauthenticated token exchange the guard is meant to block
+  - `ngx_http_oidc_validate_provider` now treats a constant zero-length `client_secret` as unset and rejects it together with `pkce off`. A value referencing a variable cannot be evaluated at config time and remains the operator's responsibility
+  - The callback now gates `&client_secret=` on the resolved value length instead of the pointer, so a value that resolves to empty at runtime never sends an empty `&client_secret=`. This is body-construction correctness, not an exchange-aborting per-request guard
+
 ## [9fa78af](../../commit/9fa78af) - 2026-06-25
 
 ### Fixed
