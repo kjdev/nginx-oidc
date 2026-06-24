@@ -155,6 +155,8 @@ Default: —
 
 The OAuth 2.0 client secret. Required for Confidential Clients. It may be omitted for Public Clients that use PKCE. When omitted, `client_secret` is not included in the request to the token endpoint.
 
+A Public Client that omits `client_secret` must keep PKCE enabled. A configuration with `client_secret` unset and `pkce off` is rejected with an error at startup, because the token exchange would carry neither client authentication nor a PKCE proof, losing the defense against authorization code interception.
+
 The client secret is sensitive information. Protect it appropriately.
 
 #### session_store
@@ -232,6 +234,8 @@ Default: on
 Enables PKCE (Proof Key for Code Exchange). Compliant with OAuth 2.0 Security Best Current Practice, it is enabled by default for enhanced security.
 
 Enabling PKCE is recommended for security reasons.
+
+PKCE cannot be disabled for a Public Client that does not set `client_secret`. A configuration with `client_secret` unset and `pkce off` is rejected with an error at startup. Keep PKCE enabled for a Public Client, or set `client_secret` for a Confidential Client.
 
 #### code_challenge_method
 
