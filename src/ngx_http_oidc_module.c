@@ -1264,6 +1264,22 @@ ngx_http_oidc_validate_provider(ngx_conf_t *cf,
         return NGX_CONF_ERROR;
     }
 
+    /* Reject an unauthenticated token exchange configuration.
+     * Without client_secret (public client) and with PKCE disabled, the
+     * token request carries neither client authentication nor a PKCE proof,
+     * removing the defense against authorization code interception. A public
+     * client must keep PKCE enabled; a confidential client must provide a
+     * client_secret. pkce.enable is already resolved to its default at this
+     * point (see ngx_http_oidc_init_main_conf). */
+    if (provider->client_secret == NULL && !provider->pkce.enable) {
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                           "oidc provider \"%V\": insecure configuration: "
+                           "\"client_secret\" is unset and \"pkce\" is off; "
+                           "set \"client_secret\" or keep \"pkce\" on",
+                           &provider->name);
+        return NGX_CONF_ERROR;
+    }
+
     /* Validate code_challenge_method if configured with constant value */
     if (provider->pkce.method_cv != NULL
         && provider->pkce.method_cv->value.len > 0
