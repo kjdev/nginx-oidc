@@ -526,7 +526,6 @@ ngx_oidc_session_store_memory_cleanup_expired(ngx_http_request_t *r,
     ngx_queue_t *q, *prev;
     store_node_t *ocn;
     time_t now;
-    ngx_uint_t scanned = 0;
 
     if (mem_validate_store(r, store, &octx) != NGX_OK) {
         return NGX_ERROR;
@@ -537,13 +536,14 @@ ngx_oidc_session_store_memory_cleanup_expired(ngx_http_request_t *r,
     ngx_shmtx_lock(&octx->shpool->mutex);
 
     /*
-     * The queue is ordered by recency of use, not by expiration, so we cannot
-     * stop at the first non-expired entry. Walk a bounded number of nodes from
-     * the LRU tail (where stale entries accumulate) and drop expired ones.
+     * The queue is LRU-ordered, not expiration-ordered. A bounded tail scan
+     * cannot reach recently-accessed entries that have since expired. Walk the
+     * full queue instead; entry count is bounded by max_size so lock hold
+     * time remains bounded.
      */
     q = ngx_queue_last(&octx->expire_queue);
 
-    while (q != ngx_queue_sentinel(&octx->expire_queue) && scanned < 128) {
+    while (q != ngx_queue_sentinel(&octx->expire_queue)) {
         prev = ngx_queue_prev(q);
         ocn = ngx_queue_data(q, store_node_t, queue);
 
@@ -552,7 +552,6 @@ ngx_oidc_session_store_memory_cleanup_expired(ngx_http_request_t *r,
         }
 
         q = prev;
-        scanned++;
     }
 
     ngx_shmtx_unlock(&octx->shpool->mutex);
