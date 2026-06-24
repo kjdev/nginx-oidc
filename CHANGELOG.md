@@ -1,5 +1,13 @@
 # Changelog
 
+## [9fa78af](../../commit/9fa78af) - 2026-06-25
+
+### Fixed
+
+- Reject a provider configured with no `client_secret` and `pkce off`
+  - A public client (no `client_secret`) combined with `pkce off` made the token exchange carry neither client authentication nor a PKCE proof, removing the defense against authorization code interception. Such an insecure configuration could be created by mistake and was silently accepted
+  - `ngx_http_oidc_validate_provider` now rejects the combination so nginx fails to start: a public client must keep PKCE enabled, and a confidential client must provide a `client_secret`. The startup check is the single line of defense, so no redundant per-request guard is added in the callback handler
+
 ## [3f44b73](../../commit/3f44b73) - 2026-06-24
 
 ### Fixed
