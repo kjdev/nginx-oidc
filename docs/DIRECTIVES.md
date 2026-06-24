@@ -155,7 +155,7 @@ Default: —
 
 The OAuth 2.0 client secret. Required for Confidential Clients. It may be omitted for Public Clients that use PKCE. When omitted, `client_secret` is not included in the request to the token endpoint.
 
-A Public Client that omits `client_secret` must keep PKCE enabled. A configuration with `client_secret` unset and `pkce off` is rejected with an error at startup, because the token exchange would carry neither client authentication nor a PKCE proof, losing the defense against authorization code interception.
+A Public Client that omits `client_secret` must keep PKCE enabled. A configuration with `client_secret` unset and `pkce off` is rejected with an error at startup, because the token exchange would carry neither client authentication nor a PKCE proof, losing the defense against authorization code interception. An empty string (`client_secret "";`) is treated the same as unset, so it is likewise rejected when combined with `pkce off`. A value that uses a variable and resolves to an empty string at runtime cannot be detected at startup and is the operator's responsibility; even then, an empty `client_secret` is not included in the request to the token endpoint.
 
 The client secret is sensitive information. Protect it appropriately.
 
