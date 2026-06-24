@@ -60,3 +60,17 @@ user algorithm is RS256
 --- must_die
 --- error_log
 insecure configuration
+
+=== optional-provider-opts: empty client_secret with pkce off is rejected at startup
+--- http_config
+    oidc_provider test_provider {
+        issuer "http://127.0.0.1:8888";
+        client_id "test";
+        client_secret "";
+        pkce off;
+    }
+--- config
+    auth_oidc test_provider;
+--- must_die
+--- error_log
+insecure configuration
