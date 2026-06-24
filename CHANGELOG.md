@@ -1,5 +1,13 @@
 # Changelog
 
+## [3f44b73](../../commit/3f44b73) - 2026-06-24
+
+### Fixed
+
+- Scan the full LRU queue in `cleanup_expired` to evict head-side expired entries
+  - After the LRU conversion, `cleanup_expired` walked only the 128 tail-most nodes. Entries near the LRU head — recently accessed entries whose TTL had just elapsed — were never reached and lingered in shared memory indefinitely. The only removal paths for such entries were an explicit `get` call (which checks expiry on access) or LRU eviction naturally pushing the entry toward the tail
+  - Since entry count is always bounded by `memory_max_size`, a full queue walk is safe: lock hold time scales with `memory_max_size`, not with an arbitrary scan limit
+
 ## [560d0b9](../../commit/560d0b9) - 2026-06-24
 
 ### Fixed
