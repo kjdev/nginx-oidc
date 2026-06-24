@@ -47,3 +47,16 @@ userinfo:\{.+\}
 user id is user-identifier
 user email is test\@example\.com
 user algorithm is RS256
+
+=== optional-provider-opts: client_secret unset with pkce off is rejected at startup
+--- http_config
+    oidc_provider test_provider {
+        issuer "http://127.0.0.1:8888";
+        client_id "test";
+        pkce off;
+    }
+--- config
+    auth_oidc test_provider;
+--- must_die
+--- error_log
+insecure configuration
