@@ -27,7 +27,7 @@ typedef struct {
 typedef struct {
     ngx_rbtree_t       rbtree;
     ngx_rbtree_node_t  sentinel;
-    ngx_queue_t        expire_queue;
+    ngx_queue_t        lru_queue;
     ngx_slab_pool_t   *shpool;
     ngx_uint_t         max_size;
     ngx_uint_t         count;
@@ -154,7 +154,7 @@ mem_update_node(shm_zone_t *octx, store_node_t *ocn,
 
     /* Move to LRU head: this entry was just accessed (written) */
     ngx_queue_remove(&ocn->queue);
-    ngx_queue_insert_head(&octx->expire_queue, &ocn->queue);
+    ngx_queue_insert_head(&octx->lru_queue, &ocn->queue);
 
     return NGX_OK;
 }
@@ -213,7 +213,7 @@ mem_create_node(shm_zone_t *octx, uint32_t hash, ngx_str_t *key,
 
     /* Insert into rbtree and at the LRU head (most recently used) */
     ngx_rbtree_insert(&octx->rbtree, node);
-    ngx_queue_insert_head(&octx->expire_queue, &ocn->queue);
+    ngx_queue_insert_head(&octx->lru_queue, &ocn->queue);
     octx->count++;
 
     return NGX_OK;
@@ -234,7 +234,7 @@ mem_remove_node(shm_zone_t *octx, store_node_t *ocn)
 /*
  * Evict entries to make room when at max_size (called with lock held).
  *
- * The expire_queue is ordered by recency of use (head = most recently used,
+ * The lru_queue is ordered by recency of use (head = most recently used,
  * tail = least recently used), so eviction must target the tail. This keeps
  * in-flight, freshly created entries (e.g. state/nonce/code_verifier during
  * an active authentication) safe, since they are at the head right after
@@ -257,9 +257,9 @@ mem_evict_if_needed(shm_zone_t *octx)
 
     /* Best-effort: reclaim expired entries sitting at the LRU tail */
     while (octx->count >= octx->max_size
-           && !ngx_queue_empty(&octx->expire_queue))
+           && !ngx_queue_empty(&octx->lru_queue))
     {
-        q = ngx_queue_last(&octx->expire_queue);
+        q = ngx_queue_last(&octx->lru_queue);
         ocn = ngx_queue_data(q, store_node_t, queue);
 
         if (ocn->expires >= now) {
@@ -271,9 +271,9 @@ mem_evict_if_needed(shm_zone_t *octx)
 
     /* If still at limit, evict the least-recently-used entry (queue tail) */
     if (octx->count >= octx->max_size
-        && !ngx_queue_empty(&octx->expire_queue))
+        && !ngx_queue_empty(&octx->lru_queue))
     {
-        q = ngx_queue_last(&octx->expire_queue);
+        q = ngx_queue_last(&octx->lru_queue);
         ocn = ngx_queue_data(q, store_node_t, queue);
         mem_remove_node(octx, ocn);
     }
@@ -479,7 +479,7 @@ ngx_oidc_session_store_memory_get(ngx_http_request_t *r,
 
     /* Move to LRU head: this entry was just accessed (read) */
     ngx_queue_remove(&ocn->queue);
-    ngx_queue_insert_head(&octx->expire_queue, &ocn->queue);
+    ngx_queue_insert_head(&octx->lru_queue, &ocn->queue);
 
     ngx_shmtx_unlock(&octx->shpool->mutex);
     return NGX_OK;
@@ -541,9 +541,9 @@ ngx_oidc_session_store_memory_cleanup_expired(ngx_http_request_t *r,
      * full queue instead; entry count is bounded by max_size so lock hold
      * time remains bounded.
      */
-    q = ngx_queue_last(&octx->expire_queue);
+    q = ngx_queue_last(&octx->lru_queue);
 
-    while (q != ngx_queue_sentinel(&octx->expire_queue)) {
+    while (q != ngx_queue_sentinel(&octx->lru_queue)) {
         prev = ngx_queue_prev(q);
         ocn = ngx_queue_data(q, store_node_t, queue);
 
@@ -596,7 +596,7 @@ ngx_oidc_session_store_memory_shm_zone_init(ngx_shm_zone_t *shm_zone,
                     ngx_str_rbtree_insert_value);
 
     /* Initialize expire queue */
-    ngx_queue_init(&octx->expire_queue);
+    ngx_queue_init(&octx->lru_queue);
 
     shm_zone->data = octx;
 
