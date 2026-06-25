@@ -272,7 +272,7 @@ Syntax:  pre_auth_timeout <time>;
 Default: 600
 ```
 
-Lifetime (in seconds) of the temporary data created before authentication completes (state, nonce, PKCE code_verifier, and the original URL). You can specify any positive integer or time string (e.g., `5m`, `10m`). It controls the grace period between redirecting to the authorization endpoint and the callback returning; the temporary cookie's Max-Age also follows this value. The lifetime of the completed session itself is governed by `session_timeout`, and the authorization-code replay guard uses a fixed internal value; neither is affected by this setting.
+Lifetime (in seconds) of the temporary data created before authentication completes (state, nonce, PKCE code_verifier, and the original URL) in the server-side store. You can specify any positive integer or time string (e.g., `5m`, `10m`). It controls the grace period between redirecting to the authorization endpoint and the callback returning. The temporary cookie's Max-Age, the authorization-code replay guard, and the lifetime of the completed session itself (`session_timeout`) are all separate concerns and are not affected by this setting. The temporary cookie's Max-Age and the replay guard use a fixed internal value (600 seconds).
 
 #### logout_uri
 
