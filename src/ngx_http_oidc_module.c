@@ -1437,6 +1437,22 @@ static conf_size_min_t ngx_oidc_conf_memory_min = {
     1024 * 1024
 };
 
+/*
+ * Memory max entry count validation (1 - 1000000)
+ *
+ * Bounds the maximum number of session entries the memory store retains.
+ * The lower bound keeps the store usable; the upper bound caps the worst-case
+ * cleanup_expired full-scan time under the slab mutex. memory_max_size is a
+ * trusted admin value, but a misconfigured huge value (e.g. an extra digit)
+ * would hold the lock long enough to affect every request sharing the zone,
+ * so fail fast at configuration load. Large-scale deployments should use Redis.
+ */
+static conf_uint_bounds_t ngx_oidc_conf_memory_max_size_bounds = {
+    ngx_oidc_conf_check_uint_bounds,
+    1,
+    1000000
+};
+
 /**
  * Search static_locations tree for a location with the given full path
  *
@@ -2306,7 +2322,10 @@ ngx_http_oidc_session_store_command(ngx_conf_t *cf, ngx_command_t *cmd,
                                &value[1]);
             return NGX_CONF_ERROR;
         }
-        return NGX_CONF_OK;
+
+        /* Validate range using post_handler */
+        return ngx_oidc_conf_check_uint_bounds(
+            cf, &ngx_oidc_conf_memory_max_size_bounds, &store->memory.max_size);
     }
 
     if (ngx_strcmp(value[0].data, "hostname") == 0) {
