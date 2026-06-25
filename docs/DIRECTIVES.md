@@ -15,6 +15,7 @@ For configuration examples, refer to the following documents:
 |---|---|---|
 | [auth_oidc](#auth_oidc) | Enable OIDC authentication | http, server, location |
 | [auth_oidc_mode](#auth_oidc_mode) | Control authentication mode | http, server, location |
+| [oidc_cleanup_interval](#oidc_cleanup_interval) | Frequency of expired-entry cleanup | http, server, location |
 | [oidc_provider](#oidc_provider) | Define an OIDC provider | http |
 | [oidc_session_store](#oidc_session_store) | Define a session store | http |
 | [oidc_base_url](#oidc_base_url) | Base URL for redirect URIs | http, server, location |
@@ -112,6 +113,15 @@ server {
 - **`auth_oidc_mode off`**: The provider association is inherited from the parent context, but authentication processing is skipped. `$oidc_authenticated` returns `"0"`, and other `$oidc_*` variables are empty. However, callback requests continue to be processed.
 
 Normally `auth_oidc_mode off` is sufficient, but use `auth_oidc off` when you want to completely exclude OIDC module processing (e.g., static file serving).
+
+### oidc_cleanup_interval
+
+```
+Syntax:  oidc_cleanup_interval <number>;
+Default: 100
+```
+
+Controls how often the memory store reclaims expired entries (cleanup). Cleanup runs on roughly 1 out of every N requests (about 1% by default). A larger value lowers the cleanup frequency; a smaller value raises it. A value of `1` or less runs cleanup on every request. This has no effect on the Redis store, where entries expire automatically via TTL.
 
 ### oidc_provider
 
@@ -254,6 +264,15 @@ Default: 28800
 ```
 
 Session timeout (in seconds). You can specify any positive integer or time string (e.g., `1h`, `1d`). Specifying 0 creates a session cookie without a Max-Age attribute (deleted when the browser session ends). This is separate from the session store's `ttl` setting (`ttl` controls the expiration of data in the server-side store, while `session_timeout` controls the lifetime of the cookie sent to the browser).
+
+#### pre_auth_timeout
+
+```
+Syntax:  pre_auth_timeout <time>;
+Default: 600
+```
+
+Lifetime (in seconds) of the temporary data created before authentication completes (state, nonce, PKCE code_verifier, and the original URL). You can specify any positive integer or time string (e.g., `5m`, `10m`). It controls the grace period between redirecting to the authorization endpoint and the callback returning; the temporary cookie's Max-Age also follows this value. The lifetime of the completed session itself is governed by `session_timeout`, and the authorization-code replay guard uses a fixed internal value; neither is affected by this setting.
 
 #### logout_uri
 
