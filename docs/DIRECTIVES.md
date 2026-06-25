@@ -426,7 +426,7 @@ Default: 1000
 Context: memory type only
 ```
 
-The maximum number of session entries stored in the memory store. When the limit is reached, expired entries are deleted first. If that is insufficient, the oldest entries are evicted.
+The maximum number of session entries stored in the memory store. Specify a value between `1` and `1000000` (out-of-range values result in an error). When the limit is reached, expired entries are deleted first. If that is insufficient, the oldest entries are evicted. Redis is recommended for large-scale deployments.
 
 #### hostname
 
