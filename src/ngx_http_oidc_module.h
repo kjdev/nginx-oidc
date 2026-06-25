@@ -21,6 +21,9 @@
 /* 10 minutes for Pre-Auth Session */
 #define NGX_OIDC_PRE_AUTH_TIMEOUT 600
 
+/* Default for oidc_cleanup_interval: run cleanup on ~1/N requests */
+#define NGX_OIDC_CLEANUP_INTERVAL_DEFAULT 100
+
 /* Internal location for HTTP requests to OIDC providers */
 #define NGX_OIDC_FETCH_PATH "/_oidc_http_fetch"
 

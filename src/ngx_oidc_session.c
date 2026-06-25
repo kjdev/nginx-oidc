@@ -808,7 +808,8 @@ ngx_oidc_session_clear_permanent_cookie(ngx_http_request_t *r,
  * Implementation:
  * - Hash the authorization code using SHA-256
  * - Store the hash in session store with key "used_code:<hash>"
- * - TTL set to NGX_OIDC_PRE_AUTH_TIMEOUT (same as state/nonce)
+ * - TTL set to the fixed NGX_OIDC_PRE_AUTH_TIMEOUT (independent of the
+ *   configurable pre_auth_timeout used for state/nonce)
  * - If code is reused, reject the request
  */
 

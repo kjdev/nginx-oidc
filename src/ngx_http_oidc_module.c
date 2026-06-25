@@ -932,9 +932,11 @@ ngx_http_oidc_access_handler(ngx_http_request_t *r)
         return NGX_DECLINED;
     }
 
-    /* Periodic cleanup (interval configurable; <=1 means every request) */
+    /* Periodic cleanup (interval configurable; <=1 means every request).
+     * ngx_random() returns a non-negative value and the divisor is > 1 here,
+     * so the modulo is well-defined. */
     if (olcf->cleanup_interval <= 1
-        || (ngx_uint_t) ngx_random() % olcf->cleanup_interval == 0)
+        || (ngx_random() % olcf->cleanup_interval) == 0)
     {
         ngx_oidc_session_store_cleanup_expired(r, NULL);
     }
@@ -1916,7 +1918,8 @@ ngx_http_oidc_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
     ngx_http_oidc_loc_conf_t *conf = child;
 
     ngx_conf_merge_value(conf->enabled, prev->enabled, 0);
-    ngx_conf_merge_value(conf->cleanup_interval, prev->cleanup_interval, 100);
+    ngx_conf_merge_value(conf->cleanup_interval, prev->cleanup_interval,
+                         NGX_OIDC_CLEANUP_INTERVAL_DEFAULT);
 
     if (conf->mode == NGX_HTTP_OIDC_MODE_UNSET) {
         conf->mode = (prev->mode != NGX_HTTP_OIDC_MODE_UNSET)
