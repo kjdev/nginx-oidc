@@ -97,6 +97,18 @@ typedef struct {
 } conf_msec_bounds_t;
 
 /**
+ * Post-handler structure for second-based bounds validation
+ *
+ * Used to validate time values stored as seconds (e.g. pre_auth_timeout) to
+ * ensure they fall within an acceptable range.
+ */
+typedef struct {
+    ngx_conf_post_handler_pt  post_handler;
+    time_t                    low;
+    time_t                    high;
+} conf_sec_bounds_t;
+
+/**
  * Post-handler structure for size minimum validation
  *
  * Used to validate size values (memory_size, etc.) to ensure they meet
@@ -1184,6 +1196,37 @@ ngx_oidc_conf_check_msec_bounds(ngx_conf_t *cf, void *post, void *data)
 }
 
 /**
+ * Post-handler for validating second-based bounds
+ *
+ * Validates that a time value (in seconds) falls within specified low/high
+ * bounds. Used for pre_auth_timeout, which directly governs the server-side
+ * lifetime of state / nonce / PKCE code_verifier / original URI and thus the
+ * CSRF protection window.
+ *
+ * @param[in] cf        nginx configuration context
+ * @param[in] post      conf_sec_bounds_t structure with bounds
+ * @param[in,out] data  pointer to time_t value to validate
+ *
+ * @return NGX_CONF_OK if valid, NGX_CONF_ERROR otherwise
+ */
+static char *
+ngx_oidc_conf_check_sec_bounds(ngx_conf_t *cf, void *post, void *data)
+{
+    conf_sec_bounds_t *bounds = post;
+    time_t *tp = data;
+
+    if (*tp >= bounds->low && *tp <= bounds->high) {
+        return NGX_CONF_OK;
+    }
+
+    ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                       "value must be between %T and %T",
+                       bounds->low, bounds->high);
+
+    return NGX_CONF_ERROR;
+}
+
+/**
  * Post-handler for validating minimum size requirements
  *
  * Validates that a size value meets minimum requirements.
@@ -1451,6 +1494,22 @@ static conf_uint_bounds_t ngx_oidc_conf_memory_max_size_bounds = {
     ngx_oidc_conf_check_uint_bounds,
     1,
     1000000
+};
+
+/*
+ * Pre-auth timeout range validation (1 - 3600 seconds)
+ *
+ * Bounds the server-side lifetime of state / nonce / PKCE code_verifier /
+ * original URI. The lower bound rejects 0, which would expire entries within
+ * the same second they are stored and make every legitimate login fail state
+ * validation (self-inflicted DoS). The upper bound of one hour caps the CSRF
+ * protection (state / nonce reuse) window while still leaving ample time for
+ * slow logins such as MFA. The default of 600 seconds falls within this range.
+ */
+static conf_sec_bounds_t ngx_oidc_conf_pre_auth_timeout_bounds = {
+    ngx_oidc_conf_check_sec_bounds,
+    1,
+    3600
 };
 
 /**
@@ -1795,9 +1854,15 @@ ngx_http_oidc_init_main_conf(ngx_conf_t *cf, void *conf)
                 provider[i].session_timeout = 28800;
             }
             /* Set default pre_auth_timeout if not explicitly configured
-             * (10 minutes = 600 seconds) */
+             * (10 minutes = 600 seconds); validate explicit values against
+             * the allowed range */
             if (provider[i].pre_auth_timeout == NGX_CONF_UNSET) {
                 provider[i].pre_auth_timeout = NGX_OIDC_PRE_AUTH_TIMEOUT;
+            } else if (ngx_oidc_conf_check_sec_bounds(
+                           cf, &ngx_oidc_conf_pre_auth_timeout_bounds,
+                           &provider[i].pre_auth_timeout) != NGX_CONF_OK)
+            {
+                return NGX_CONF_ERROR;
             }
             /* Set default clock_skew if not explicitly configured
              * (5 minutes = 300 seconds) */
