@@ -25,6 +25,36 @@ GET /
 Set-Cookie: NGX_OIDC_SESSION_CALLBACK=test_provider:.*; Path=/; HttpOnly; SameSite=Lax; Max-Age=600
 Location: http://127.0.0.1:8888/authorize\?response_type=code&client_id=test&redirect_uri=http://127.0.0.1:1984/oidc_callback&scope=openid&state=.+&nonce=.+&code_challenge=.+&code_challenge_method=S256
 
+=== auth-flow: temporary cookie Max-Age follows pre_auth_timeout
+--- http_config
+    lua_package_path "$TEST_NGINX_LUA_DIR/?.lua;;";
+    lua_shared_dict cookie_dict 1m;
+    oidc_session_store maxage_store {
+        type memory;
+        size 10m;
+        ttl 3600;
+    }
+    oidc_provider test_provider {
+        issuer "http://127.0.0.1:8888";
+        client_id "test";
+        client_secret "b028e7a42bbb072acf09ed342e760627";
+        redirect_uri "http://127.0.0.1:1984/oidc_callback";
+        session_store maxage_store;
+        userinfo on;
+        pre_auth_timeout 1200;
+    }
+    include $TEST_NGINX_CONF_DIR/server-app.conf;
+    include $TEST_NGINX_CONF_DIR/stub-idp.conf;
+--- config
+    include $TEST_NGINX_CONF_DIR/location-fetch.conf;
+    auth_oidc test_provider;
+    include $TEST_NGINX_CONF_DIR/location-test.conf;
+--- request
+GET /
+--- error_code: 302
+--- response_headers_like
+Set-Cookie: NGX_OIDC_SESSION_CALLBACK=test_provider:.*; Path=/; HttpOnly; SameSite=Lax; Max-Age=1200
+
 === auth-flow: token request
 --- http_config
     lua_package_path "$TEST_NGINX_LUA_DIR/?.lua;;";
