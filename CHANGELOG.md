@@ -1,5 +1,14 @@
 # Changelog
 
+## [e2fd509](../../commit/e2fd509) - 2026-06-25
+
+### Added
+
+- Add the `pre_auth_timeout` (provider) and `oidc_cleanup_interval` (location) directives
+  - `pre_auth_timeout` (default 600): makes the lifetime of the pre-auth entries created by the authenticate handler (state, nonce, PKCE code_verifier, original URL) configurable. Replaces the previously hardcoded `NGX_OIDC_PRE_AUTH_TIMEOUT` at the two creation sites and keeps the constant as the default. The temporary-cookie Max-Age and the authorization-code replay guard are separate concerns and keep the fixed value
+  - `oidc_cleanup_interval` (default 100): makes the N in the `ngx_random() % N` trigger for memory-store expired-entry cleanup configurable. A value of 1 or less runs cleanup on every request and also avoids a modulo-by-zero
+  - Both defaults preserve the previous behavior, so existing configurations are unaffected
+
 ## [5c9a282](../../commit/5c9a282) - 2026-06-25
 
 ### Fixed
