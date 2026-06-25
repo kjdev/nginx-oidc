@@ -1479,9 +1479,9 @@ static ngx_int_t
 ngx_http_oidc_search_location_tree(ngx_http_location_tree_node_t *node,
     ngx_str_t *location_name)
 {
-    u_char    *uri;
-    size_t     len, n;
-    ngx_int_t  rc;
+    u_char *uri;
+    size_t len, n;
+    ngx_int_t rc;
 
     uri = location_name->data;
     len = location_name->len;
