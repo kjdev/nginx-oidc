@@ -48,6 +48,29 @@ user id is user-identifier
 user email is test\@example\.com
 user algorithm is RS256
 
+=== optional-provider-opts: full flow with client_secret and redirect_uri both omitted
+--- http_config
+    lua_package_path "$TEST_NGINX_LUA_DIR/?.lua;;";
+    lua_shared_dict cookie_dict 1m;
+    include $TEST_NGINX_CONF_DIR/test-provider-optional.conf;
+    include $TEST_NGINX_CONF_DIR/server-app.conf;
+    include $TEST_NGINX_CONF_DIR/stub-idp.conf;
+--- config
+    include $TEST_NGINX_CONF_DIR/location-fetch.conf;
+    auth_oidc test_provider;
+    include $TEST_NGINX_CONF_DIR/location-test.conf;
+--- request
+GET /test
+--- error_code: 200
+--- response_body_like
+authenticate:1
+id-token:.+
+access-token:.+
+userinfo:\{.+\}
+user id is user-identifier
+user email is test\@example\.com
+user algorithm is RS256
+
 === optional-provider-opts: client_secret unset with pkce off is rejected at startup
 --- http_config
     oidc_provider test_provider {
