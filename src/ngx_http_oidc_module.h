@@ -86,6 +86,8 @@ typedef struct {
     ngx_oidc_session_store_t *session_store;
     /** session timeout (seconds) */
     time_t                    session_timeout;
+    /** pre-auth session lifetime (state/nonce/PKCE verifier/original URI) */
+    time_t                    pre_auth_timeout;
     /** clock skew tolerance */
     time_t                    clock_skew;
     /** userinfo fetch mode */
@@ -220,6 +222,8 @@ typedef struct {
     ngx_oidc_session_store_t *session_store;
     /** cookie name override */
     ngx_http_complex_value_t *cookie_name;
+    /** periodic cleanup interval (1/N requests trigger cleanup) */
+    ngx_int_t                 cleanup_interval;
 } ngx_http_oidc_loc_conf_t;
 
 extern ngx_module_t ngx_http_oidc_module;

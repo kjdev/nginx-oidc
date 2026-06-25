@@ -448,7 +448,7 @@ ngx_oidc_handler_authenticate(ngx_http_request_t *r,
     /* Store the original URI in session store */
     if (ngx_oidc_session_set_orig_uri(r, provider->session_store, session_id,
                                       &original_uri,
-                                      ngx_time() + NGX_OIDC_PRE_AUTH_TIMEOUT)
+                                      ngx_time() + provider->pre_auth_timeout)
         != NGX_OK)
     {
         ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
@@ -484,7 +484,7 @@ ngx_oidc_handler_authenticate(ngx_http_request_t *r,
     }
 
     /* Store state, nonce, and code_verifier in session store */
-    time_t expires = ngx_time() + NGX_OIDC_PRE_AUTH_TIMEOUT;
+    time_t expires = ngx_time() + provider->pre_auth_timeout;
     if (ngx_oidc_session_set_state(r, provider->session_store, session_id,
                                    &state, expires)
         != NGX_OK)

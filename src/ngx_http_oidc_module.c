@@ -121,6 +121,7 @@ typedef struct {
             (p)->logout.token_hint = NGX_CONF_UNSET; \
             (p)->userinfo_mode = NGX_CONF_UNSET_UINT; \
             (p)->session_timeout = NGX_CONF_UNSET; \
+            (p)->pre_auth_timeout = NGX_CONF_UNSET; \
             (p)->clock_skew = NGX_CONF_UNSET; \
         } while (0)
 
@@ -229,6 +230,9 @@ static ngx_command_t ngx_http_oidc_commands[] = {
     { ngx_string("session_timeout"), NGX_HTTP_MAIN_CONF | NGX_CONF_TAKE1,
       ngx_conf_set_sec_slot, 0,
       offsetof(ngx_http_oidc_provider_t, session_timeout), NULL },
+    { ngx_string("pre_auth_timeout"), NGX_HTTP_MAIN_CONF | NGX_CONF_TAKE1,
+      ngx_conf_set_sec_slot, 0,
+      offsetof(ngx_http_oidc_provider_t, pre_auth_timeout), NULL },
     { ngx_string("clock_skew"), NGX_HTTP_MAIN_CONF | NGX_CONF_TAKE1,
       ngx_conf_set_sec_slot, 0,
       offsetof(ngx_http_oidc_provider_t, clock_skew), NULL },
@@ -252,6 +256,11 @@ static ngx_command_t ngx_http_oidc_commands[] = {
       NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
       NGX_CONF_TAKE1, ngx_http_oidc_set_mode,
       NGX_HTTP_LOC_CONF_OFFSET, 0, NULL },
+    { ngx_string("oidc_cleanup_interval"),
+      NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
+      NGX_CONF_TAKE1, ngx_conf_set_num_slot,
+      NGX_HTTP_LOC_CONF_OFFSET,
+      offsetof(ngx_http_oidc_loc_conf_t, cleanup_interval), NULL },
     { ngx_string("oidc_status"),
       NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_NOARGS,
       ngx_http_oidc_set_status, 0, 0, NULL },
@@ -923,8 +932,10 @@ ngx_http_oidc_access_handler(ngx_http_request_t *r)
         return NGX_DECLINED;
     }
 
-    /* Periodic cleanup */
-    if (ngx_random() % 100 == 0) {
+    /* Periodic cleanup (interval configurable; <=1 means every request) */
+    if (olcf->cleanup_interval <= 1
+        || (ngx_uint_t) ngx_random() % olcf->cleanup_interval == 0)
+    {
         ngx_oidc_session_store_cleanup_expired(r, NULL);
     }
 
@@ -1765,6 +1776,11 @@ ngx_http_oidc_init_main_conf(ngx_conf_t *cf, void *conf)
             if (provider[i].session_timeout == NGX_CONF_UNSET) {
                 provider[i].session_timeout = 28800;
             }
+            /* Set default pre_auth_timeout if not explicitly configured
+             * (10 minutes = 600 seconds) */
+            if (provider[i].pre_auth_timeout == NGX_CONF_UNSET) {
+                provider[i].pre_auth_timeout = NGX_OIDC_PRE_AUTH_TIMEOUT;
+            }
             /* Set default clock_skew if not explicitly configured
              * (5 minutes = 300 seconds) */
             if (provider[i].clock_skew == NGX_CONF_UNSET) {
@@ -1888,6 +1904,7 @@ ngx_http_oidc_create_loc_conf(ngx_conf_t *cf)
 
     olcf->enabled = NGX_CONF_UNSET;
     olcf->mode = NGX_HTTP_OIDC_MODE_UNSET;
+    olcf->cleanup_interval = NGX_CONF_UNSET;
 
     return olcf;
 }
@@ -1899,6 +1916,7 @@ ngx_http_oidc_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
     ngx_http_oidc_loc_conf_t *conf = child;
 
     ngx_conf_merge_value(conf->enabled, prev->enabled, 0);
+    ngx_conf_merge_value(conf->cleanup_interval, prev->cleanup_interval, 100);
 
     if (conf->mode == NGX_HTTP_OIDC_MODE_UNSET) {
         conf->mode = (prev->mode != NGX_HTTP_OIDC_MODE_UNSET)
