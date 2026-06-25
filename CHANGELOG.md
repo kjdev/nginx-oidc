@@ -1,5 +1,13 @@
 # Changelog
 
+## [723cce2](../../commit/723cce2) - 2026-06-26
+
+### Fixed
+
+- Track `pre_auth_timeout` in the temporary cookie's Max-Age
+  - The temporary cookie carries the opaque `session_id` that correlates the callback with the server-side pre-auth entries (state, nonce, PKCE code_verifier, original URL), which expire after `pre_auth_timeout`. Its Max-Age was hardcoded to 600, so when `pre_auth_timeout` exceeded 600 the browser dropped the cookie early and a login completing between 600 seconds and `pre_auth_timeout` lost its `session_id` and failed
+  - The cookie Max-Age now follows `provider->pre_auth_timeout` (length calculation uses `NGX_TIME_T_LEN` instead of the literal `Max-Age=600`). The authorization-code replay guard is a separate concern and keeps its fixed value
+
 ## [511c326](../../commit/511c326) - 2026-06-26
 
 ### Fixed
