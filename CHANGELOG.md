@@ -1,5 +1,13 @@
 # Changelog
 
+## [7ef0f1e](../../commit/7ef0f1e) - 2026-06-26
+
+### Fixed
+
+- Validate `memory_max_size` against a `[1, 1000000]` range
+  - Previously only `ngx_atoi` parse success was checked, so `0` or a mistyped huge value was accepted. A huge value makes the `cleanup_expired` full scan hold the slab mutex long enough to affect every request sharing the zone
+  - Reuse the existing infrastructure (`conf_uint_bounds_t` / `ngx_oidc_conf_check_uint_bounds`, as used by port and database) to fail fast with `NGX_CONF_ERROR` (nginx refuses to start) on out-of-range values. This bounds the worst-case lock hold time while preserving the full-scan guarantee
+
 ## [e2fd509](../../commit/e2fd509) - 2026-06-25
 
 ### Added
