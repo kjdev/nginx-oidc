@@ -444,7 +444,15 @@ ngx_oidc_session_get_permanent_id(ngx_http_request_t *r,
  * Set temporary callback cookie
  * Cookie name: NGX_OIDC_SESSION_CALLBACK
  * Format: "provider:session_id"
- * Max-Age: 600 seconds
+ * Max-Age: provider->pre_auth_timeout seconds
+ *
+ * The cookie only carries the opaque session_id used to correlate the
+ * callback with the server-side pre-auth entries (state / nonce / PKCE
+ * code_verifier / original URL), which also expire after pre_auth_timeout.
+ * Tracking the same lifetime keeps the cookie and those entries consistent,
+ * so a login that completes within pre_auth_timeout always finds its
+ * session_id. (A fixed Max-Age shorter than pre_auth_timeout would drop the
+ * cookie early and break otherwise-valid logins.)
  */
 ngx_int_t
 ngx_oidc_session_set_temporary_cookie(ngx_http_request_t *r,
@@ -503,7 +511,8 @@ ngx_oidc_session_set_temporary_cookie(ngx_http_request_t *r,
 
     /* Calculate Set-Cookie header length */
     len = cookie_name.len + sizeof("=") - 1 + cookie_value.len
-          + sizeof("; Path=/; HttpOnly; SameSite=Lax; Max-Age=600") - 1;
+          + sizeof("; Path=/; HttpOnly; SameSite=Lax; Max-Age=") - 1
+          + NGX_TIME_T_LEN;
     if (secure) {
         len += sizeof("; Secure") - 1;
     }
@@ -524,14 +533,14 @@ ngx_oidc_session_set_temporary_cookie(ngx_http_request_t *r,
     if (secure) {
         p = ngx_snprintf(set_cookie->value.data, len,
                          "%V=%V; Path=/; HttpOnly; Secure; "
-                         "SameSite=Lax; Max-Age=%d",
+                         "SameSite=Lax; Max-Age=%T",
                          &cookie_name, &cookie_value,
-                         NGX_OIDC_PRE_AUTH_TIMEOUT);
+                         provider->pre_auth_timeout);
     } else {
         p = ngx_snprintf(set_cookie->value.data, len,
-                         "%V=%V; Path=/; HttpOnly; SameSite=Lax; Max-Age=%d",
+                         "%V=%V; Path=/; HttpOnly; SameSite=Lax; Max-Age=%T",
                          &cookie_name, &cookie_value,
-                         NGX_OIDC_PRE_AUTH_TIMEOUT);
+                         provider->pre_auth_timeout);
     }
 
     set_cookie->value.len = p - set_cookie->value.data;
