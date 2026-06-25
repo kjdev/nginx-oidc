@@ -1,5 +1,13 @@
 # Changelog
 
+## [511c326](../../commit/511c326) - 2026-06-26
+
+### Fixed
+
+- Validate `pre_auth_timeout` against a `[1, 3600]` second range
+  - Previously only `ngx_conf_set_sec_slot` parse success was checked, so `0` or an extreme value was accepted. `0` makes the state / nonce / PKCE code_verifier / original URL entries expire within the same second they are stored, so every legitimate login fails state validation (self-inflicted DoS); an extreme value widens the state / nonce reuse (CSRF protection) window without bound
+  - Add a `time_t` bounds post-handler (`conf_sec_bounds_t` / `ngx_oidc_conf_check_sec_bounds`) and validate explicitly configured values in `init_main_conf`, failing fast with `NGX_CONF_ERROR` (nginx refuses to start) on out-of-range values. The one-hour upper bound caps the CSRF protection window while leaving ample time for slow logins such as MFA. The default of 600 seconds falls within this range
+
 ## [7ef0f1e](../../commit/7ef0f1e) - 2026-06-26
 
 ### Fixed
