@@ -6,7 +6,7 @@
 
 - Render array claims as comma-separated `$oidc_claim_*` values
   - Array-typed claims (e.g. `nginx_roles: ["admin","editor","viewer"]`) were unhandled in the claim variable getter, so `$oidc_claim_*` resolved to empty and the claim could not drive role-based access control
-  - The array is serialized to compact JSON and its structural characters (`[`, `]`, `"`) are stripped in place, yielding a comma-separated list (`admin,editor,viewer`). This mirrors the companion nginx-auth-jwt module's `$auth_jwt_claim_*` behaviour and lets nginx `map` match an individual element with a pattern like `~(^|,)admin(,|$)`. Element values stay JSON-escaped, so CR/LF inside a string element survives as the literal escape sequence rather than a raw control character, requiring no extra header sanitization
+  - Each array element is extracted individually: string elements are their decoded values (e.g. `["team[ops]"]` → `team[ops]`); non-string elements (integers, booleans, nested objects/arrays) are compact-JSON-serialized. The elements are joined with commas, yielding a list like `admin,editor,viewer`. This lets nginx `map` match an individual element with a pattern like `~(^|,)admin(,|$)`. Special characters in string values (brackets, quotes) are preserved verbatim
 
 ## [723cce2](../../commit/723cce2) - 2026-06-26
 
