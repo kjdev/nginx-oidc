@@ -879,7 +879,7 @@ JWT claim values (prefix variable).
 
 **Value types**:
 - String / number / boolean: stringified as-is (booleans become `true` / `false`).
-- Array: rendered as a comma-separated list of its elements (e.g. `["admin","editor","viewer"]` → `admin,editor,viewer`). Elements keep their JSON-escaped form; the brackets `[]` and double quotes `"` are removed. Arrays containing nested arrays or objects are not represented correctly by this simple format.
+- Array: rendered as a comma-separated list of its elements (e.g. `["admin","editor","viewer"]` → `admin,editor,viewer`). String elements are their decoded values; non-string elements (integers, booleans, nested objects or arrays) are compact-JSON-serialized. Special characters in string values (brackets, quotes) are preserved verbatim.
 
 Array claims can be used for role-based access control. Example matching a single element with `map`:
 
