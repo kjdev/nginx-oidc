@@ -359,45 +359,82 @@ ngx_oidc_variable_claim(ngx_http_request_t *r, ngx_http_variable_value_t *v,
         v->no_cacheable = 0;
         v->not_found = 0;
     } else if (nxe_json_is_array(claim_value)) {
-        /* Serialize the array to compact JSON, then strip the structural
-         * characters ('[', ']', '"') in place so the value becomes a
-         * comma-separated list (e.g. ["admin","editor"] -> admin,editor).
-         * This mirrors the companion nginx-auth-jwt module's
-         * $auth_jwt_claim_* behaviour and lets nginx `map` match an
-         * individual element with a pattern like ~(^|,)admin(,|$).
-         *
-         * The values are JSON-escaped by the serializer, so any CR/LF in
-         * a string element survives as the literal "\r"/"\n" escape
-         * sequence rather than a raw control character; no extra header
-         * sanitization is required here. */
-        ngx_str_t *json_str;
-        size_t i, t;
+        /* Build a comma-separated list by extracting each element
+         * individually: string elements become their raw decoded values
+         * (e.g. ["team[ops]"] -> team[ops]); non-string elements
+         * (integers, booleans, nested arrays/objects) are
+         * compact-JSON-serialized.  Lets nginx map match a single element
+         * with a pattern like ~(^|,)admin(,|$). */
+        size_t count, i;
+        nxe_json_t *elem;
+        ngx_str_t *parts;
+        ngx_str_t part;
+        ngx_str_t *repr;
+        size_t total_len;
+        u_char *buf, *p;
 
-        json_str = nxe_json_stringify_compact(claim_value, r->pool);
-        if (json_str == NULL) {
-            if (userinfo_to_free) {
-                nxe_json_free(userinfo_json);
+        count = nxe_json_array_size(claim_value);
+        if (count == 0) {
+            v->len = 0;
+            v->data = (u_char *) "";
+            v->valid = 1;
+            v->no_cacheable = 0;
+            v->not_found = 0;
+        } else {
+            parts = ngx_pnalloc(r->pool, count * sizeof(ngx_str_t));
+            if (parts == NULL) {
+                if (userinfo_to_free) {
+                    nxe_json_free(userinfo_json);
+                }
+                v->not_found = 1;
+                return NGX_OK;
             }
-            v->not_found = 1;
-            return NGX_OK;
-        }
 
-        for (i = t = 0; i < json_str->len; i++) {
-            switch (json_str->data[i]) {
-            case '[':
-            case ']':
-            case '"':
-                break;
-            default:
-                json_str->data[t++] = json_str->data[i];
+            total_len = count - 1;  /* N-1 comma separators */
+            for (i = 0; i < count; i++) {
+                parts[i].data = (u_char *) "";
+                parts[i].len = 0;
+                elem = nxe_json_array_get(claim_value, i);
+                if (elem == NULL) {
+                    continue;
+                }
+                if (nxe_json_is_string(elem)) {
+                    if (nxe_json_string(elem, &part) == NGX_OK) {
+                        parts[i] = part;
+                        total_len += part.len;
+                    }
+                } else {
+                    repr = nxe_json_stringify_compact(elem, r->pool);
+                    if (repr != NULL) {
+                        parts[i] = *repr;
+                        total_len += repr->len;
+                    }
+                }
             }
-        }
 
-        v->data = json_str->data;
-        v->len = t;
-        v->valid = 1;
-        v->no_cacheable = 0;
-        v->not_found = 0;
+            buf = ngx_pnalloc(r->pool, total_len > 0 ? total_len : 1);
+            if (buf == NULL) {
+                if (userinfo_to_free) {
+                    nxe_json_free(userinfo_json);
+                }
+                v->not_found = 1;
+                return NGX_OK;
+            }
+
+            p = buf;
+            for (i = 0; i < count; i++) {
+                if (i > 0) {
+                    *p++ = ',';
+                }
+                p = ngx_cpymem(p, parts[i].data, parts[i].len);
+            }
+
+            v->data = buf;
+            v->len = (size_t) (p - buf);
+            v->valid = 1;
+            v->no_cacheable = 0;
+            v->not_found = 0;
+        }
     } else {
         v->not_found = 1;
     }
