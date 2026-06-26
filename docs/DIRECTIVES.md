@@ -877,6 +877,19 @@ JWT claim values (prefix variable).
 - Authenticated: The value of the specified claim
 - Unauthenticated or claim does not exist: Empty (variable undefined)
 
+**Value types**:
+- String / number / boolean: stringified as-is (booleans become `true` / `false`).
+- Array: rendered as a comma-separated list of its elements (e.g. `["admin","editor","viewer"]` → `admin,editor,viewer`). Elements keep their JSON-escaped form; the brackets `[]` and double quotes `"` are removed. Arrays containing nested arrays or objects are not represented correctly by this simple format.
+
+Array claims can be used for role-based access control. Example matching a single element with `map`:
+
+```nginx
+map $oidc_claim_nginx_roles $is_admin {
+    "~(^|,)admin(,|$)"  1;
+    default             0;
+}
+```
+
 **Common claims**:
 - `$oidc_claim_sub`: Subject (user identifier)
 - `$oidc_claim_email`: Email address
