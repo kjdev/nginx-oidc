@@ -358,6 +358,46 @@ ngx_oidc_variable_claim(ngx_http_request_t *r, ngx_http_variable_value_t *v,
         v->valid = 1;
         v->no_cacheable = 0;
         v->not_found = 0;
+    } else if (nxe_json_is_array(claim_value)) {
+        /* Serialize the array to compact JSON, then strip the structural
+         * characters ('[', ']', '"') in place so the value becomes a
+         * comma-separated list (e.g. ["admin","editor"] -> admin,editor).
+         * This mirrors the companion nginx-auth-jwt module's
+         * $auth_jwt_claim_* behaviour and lets nginx `map` match an
+         * individual element with a pattern like ~(^|,)admin(,|$).
+         *
+         * The values are JSON-escaped by the serializer, so any CR/LF in
+         * a string element survives as the literal "\r"/"\n" escape
+         * sequence rather than a raw control character; no extra header
+         * sanitization is required here. */
+        ngx_str_t *json_str;
+        size_t i, t;
+
+        json_str = nxe_json_stringify_compact(claim_value, r->pool);
+        if (json_str == NULL) {
+            if (userinfo_to_free) {
+                nxe_json_free(userinfo_json);
+            }
+            v->not_found = 1;
+            return NGX_OK;
+        }
+
+        for (i = t = 0; i < json_str->len; i++) {
+            switch (json_str->data[i]) {
+            case '[':
+            case ']':
+            case '"':
+                break;
+            default:
+                json_str->data[t++] = json_str->data[i];
+            }
+        }
+
+        v->data = json_str->data;
+        v->len = t;
+        v->valid = 1;
+        v->no_cacheable = 0;
+        v->not_found = 0;
     } else {
         v->not_found = 1;
     }
