@@ -146,3 +146,4 @@ user id is user-identifier
 user email is test\@example\.com
 user algorithm is RS256
 user roles are admin,editor,viewer
+user special roles are team\[ops\],lead"dev
