@@ -396,19 +396,33 @@ ngx_oidc_variable_claim(ngx_http_request_t *r, ngx_http_variable_value_t *v,
                 parts[i].len = 0;
                 elem = nxe_json_array_get(claim_value, i);
                 if (elem == NULL) {
-                    continue;
+                    if (userinfo_to_free) {
+                        nxe_json_free(userinfo_json);
+                    }
+                    v->not_found = 1;
+                    return NGX_OK;
                 }
                 if (nxe_json_is_string(elem)) {
-                    if (nxe_json_string(elem, &part) == NGX_OK) {
-                        parts[i] = part;
-                        total_len += part.len;
+                    if (nxe_json_string(elem, &part) != NGX_OK) {
+                        if (userinfo_to_free) {
+                            nxe_json_free(userinfo_json);
+                        }
+                        v->not_found = 1;
+                        return NGX_OK;
                     }
+                    parts[i] = part;
+                    total_len += part.len;
                 } else {
                     repr = nxe_json_stringify_compact(elem, r->pool);
-                    if (repr != NULL) {
-                        parts[i] = *repr;
-                        total_len += repr->len;
+                    if (repr == NULL) {
+                        if (userinfo_to_free) {
+                            nxe_json_free(userinfo_json);
+                        }
+                        v->not_found = 1;
+                        return NGX_OK;
                     }
+                    parts[i] = *repr;
+                    total_len += repr->len;
                 }
             }
 
