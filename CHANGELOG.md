@@ -1,5 +1,13 @@
 # Changelog
 
+## [e777582](../../commit/e777582) - 2026-06-29
+
+### Fixed
+
+- Fail-closed on array claim element rendering failure
+  - When `nxe_json_array_get`, `nxe_json_string`, or `nxe_json_stringify_compact` failed during array claim rendering, the previous code continued the loop with an empty element, silently corrupting the claim value (e.g. a missing role in `X-User-Roles`)
+  - Each failure path now sets `v->not_found = 1` and returns early, preventing incorrect values from flowing into upstream headers. `userinfo_json` is also properly released in each early-return path
+
 ## [3b3b2b2](../../commit/3b3b2b2) - 2026-06-26
 
 ### Added
