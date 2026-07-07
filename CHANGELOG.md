@@ -3,6 +3,16 @@
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- `cookie_domain` directive (provider scope): configures the `Domain` attribute of the session cookies. When set, `Domain=<value>` is added to both the temporary and permanent cookies, enabling session sharing across subdomains (e.g. `foo.example.com` and `bar.example.com`). The `HttpOnly` / `Secure` / `SameSite` safety attributes remain module-controlled and cannot be removed
+
+### Security
+
+- `cookie_domain` values are now restricted to domain-label characters (`A-Z`, `a-z`, `0-9`, `-`, `.`); the previous CRLF-only validation let a value such as `example.com; Max-Age=...` be appended verbatim after `; Domain=`, injecting additional Set-Cookie attributes
+
 ## [0.5.0] - 2026-06-29
 
 ### Added
