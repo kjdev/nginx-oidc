@@ -99,6 +99,41 @@ validate_cookie_component(ngx_str_t *component)
 }
 
 /*
+ * Validate cookie Domain attribute value
+ *
+ * [in] domain: Domain value to validate
+ *
+ * Only allows characters valid in a domain name (ALPHA / DIGIT / "-" / "."),
+ * so that the value cannot terminate the Domain attribute and inject
+ * additional Set-Cookie attributes (e.g. "example.com; Max-Age=...").
+ *
+ * Returns NGX_OK if valid, NGX_ERROR otherwise
+ */
+static ngx_int_t
+validate_cookie_domain(ngx_str_t *domain)
+{
+    size_t i;
+
+    if (domain == NULL || domain->data == NULL || domain->len == 0) {
+        return NGX_ERROR;
+    }
+
+    for (i = 0; i < domain->len; i++) {
+        u_char c = domain->data[i];
+
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+            || (c >= '0' && c <= '9') || c == '-' || c == '.')
+        {
+            continue;
+        }
+
+        return NGX_ERROR;
+    }
+
+    return NGX_OK;
+}
+
+/*
  * Build the "; Domain=<value>" cookie attribute from provider->cookie_domain.
  *
  * [in]  r:        HTTP request context
@@ -131,10 +166,9 @@ build_cookie_domain_attr(ngx_http_request_t *r,
         return NGX_OK;
     }
 
-    if (validate_cookie_component(&domain) != NGX_OK) {
+    if (validate_cookie_domain(&domain) != NGX_OK) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                      "oidc_session: invalid cookie domain contains "
-                      "CRLF or control characters");
+                      "oidc_session: invalid cookie domain");
         return NGX_ERROR;
     }
 
