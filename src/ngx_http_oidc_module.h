@@ -50,6 +50,8 @@ typedef struct {
     ngx_http_complex_value_t *config_url;
     /** session cookie name */
     ngx_http_complex_value_t *cookie_name;
+    /** session cookie Domain attribute */
+    ngx_http_complex_value_t *cookie_domain;
     /** requested scopes (ngx_str_t) */
     ngx_array_t              *scopes;
     /** extra authorization args */

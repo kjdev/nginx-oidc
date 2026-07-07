@@ -98,6 +98,58 @@ validate_cookie_component(ngx_str_t *component)
     return NGX_OK;
 }
 
+/*
+ * Build the "; Domain=<value>" cookie attribute from provider->cookie_domain.
+ *
+ * [in]  r:        HTTP request context
+ * [in]  provider: OIDC provider configuration (may be NULL)
+ * [out] attr:     Built attribute, or empty ngx_str_t when no domain is
+ *                 configured; the caller appends it verbatim to Set-Cookie
+ *
+ * Returns NGX_OK on success (including the no-domain case), NGX_ERROR on
+ * complex value evaluation, CRLF validation, or allocation failure.
+ */
+static ngx_int_t
+build_cookie_domain_attr(ngx_http_request_t *r,
+    ngx_http_oidc_provider_t *provider, ngx_str_t *attr)
+{
+    ngx_str_t domain;
+    u_char *p;
+
+    ngx_str_null(attr);
+
+    if (provider == NULL || provider->cookie_domain == NULL) {
+        return NGX_OK;
+    }
+
+    if (ngx_http_complex_value(r, provider->cookie_domain, &domain) != NGX_OK) {
+        return NGX_ERROR;
+    }
+
+    /* Empty value: behave as if no domain is configured */
+    if (domain.len == 0) {
+        return NGX_OK;
+    }
+
+    if (validate_cookie_component(&domain) != NGX_OK) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                      "oidc_session: invalid cookie domain contains "
+                      "CRLF or control characters");
+        return NGX_ERROR;
+    }
+
+    attr->len = sizeof("; Domain=") - 1 + domain.len;
+    attr->data = ngx_pnalloc(r->pool, attr->len);
+    if (attr->data == NULL) {
+        return NGX_ERROR;
+    }
+
+    p = ngx_cpymem(attr->data, "; Domain=", sizeof("; Domain=") - 1);
+    ngx_memcpy(p, domain.data, domain.len);
+
+    return NGX_OK;
+}
+
 ngx_int_t
 ngx_oidc_session_set(ngx_http_request_t *r, ngx_oidc_session_store_t *store,
     ngx_str_t *session_id, const char *key_name, ngx_str_t *value,
@@ -459,7 +511,7 @@ ngx_oidc_session_set_temporary_cookie(ngx_http_request_t *r,
     ngx_http_oidc_provider_t *provider, ngx_str_t *session_id)
 {
     ngx_table_elt_t *set_cookie;
-    ngx_str_t cookie_name, cookie_value;
+    ngx_str_t cookie_name, cookie_value, domain_attr;
     u_char *p;
     size_t len;
     ngx_uint_t secure;
@@ -509,10 +561,15 @@ ngx_oidc_session_set_temporary_cookie(ngx_http_request_t *r,
     secure = 0;
 #endif
 
+    /* Build optional "; Domain=<value>" attribute */
+    if (build_cookie_domain_attr(r, provider, &domain_attr) != NGX_OK) {
+        return NGX_ERROR;
+    }
+
     /* Calculate Set-Cookie header length */
     len = cookie_name.len + sizeof("=") - 1 + cookie_value.len
           + sizeof("; Path=/; HttpOnly; SameSite=Lax; Max-Age=") - 1
-          + NGX_TIME_T_LEN;
+          + NGX_TIME_T_LEN + domain_attr.len;
     if (secure) {
         len += sizeof("; Secure") - 1;
     }
@@ -533,14 +590,14 @@ ngx_oidc_session_set_temporary_cookie(ngx_http_request_t *r,
     if (secure) {
         p = ngx_snprintf(set_cookie->value.data, len,
                          "%V=%V; Path=/; HttpOnly; Secure; "
-                         "SameSite=Lax; Max-Age=%T",
+                         "SameSite=Lax; Max-Age=%T%V",
                          &cookie_name, &cookie_value,
-                         provider->pre_auth_timeout);
+                         provider->pre_auth_timeout, &domain_attr);
     } else {
         p = ngx_snprintf(set_cookie->value.data, len,
-                         "%V=%V; Path=/; HttpOnly; SameSite=Lax; Max-Age=%T",
+                         "%V=%V; Path=/; HttpOnly; SameSite=Lax; Max-Age=%T%V",
                          &cookie_name, &cookie_value,
-                         provider->pre_auth_timeout);
+                         provider->pre_auth_timeout, &domain_attr);
     }
 
     set_cookie->value.len = p - set_cookie->value.data;
@@ -549,10 +606,11 @@ ngx_oidc_session_set_temporary_cookie(ngx_http_request_t *r,
 }
 
 ngx_int_t
-ngx_oidc_session_clear_temporary_cookie(ngx_http_request_t *r)
+ngx_oidc_session_clear_temporary_cookie(ngx_http_request_t *r,
+    ngx_http_oidc_provider_t *provider)
 {
     ngx_table_elt_t *set_cookie;
-    ngx_str_t cookie_name;
+    ngx_str_t cookie_name, domain_attr;
     u_char *p;
     size_t len;
     ngx_uint_t secure;
@@ -571,10 +629,17 @@ ngx_oidc_session_clear_temporary_cookie(ngx_http_request_t *r)
     secure = 0;
 #endif
 
+    /* Build optional "; Domain=<value>" attribute (must match the set cookie
+       so the browser deletes it) */
+    if (build_cookie_domain_attr(r, provider, &domain_attr) != NGX_OK) {
+        return NGX_ERROR;
+    }
+
     /* Calculate Set-Cookie header length */
     len = cookie_name.len
           + sizeof("=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; "
-                   "Expires=Thu, 01 Jan 1970 00:00:00 GMT") - 1;
+                   "Expires=Thu, 01 Jan 1970 00:00:00 GMT") - 1
+          + domain_attr.len;
     if (secure) {
         len += sizeof("; Secure") - 1;
     }
@@ -595,13 +660,13 @@ ngx_oidc_session_clear_temporary_cookie(ngx_http_request_t *r)
     if (secure) {
         p = ngx_snprintf(set_cookie->value.data, len,
                          "%V=; Path=/; HttpOnly; Secure; SameSite=Lax; "
-                         "Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT",
-                         &cookie_name);
+                         "Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT%V",
+                         &cookie_name, &domain_attr);
     } else {
         p = ngx_snprintf(set_cookie->value.data, len,
                          "%V=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; "
-                         "Expires=Thu, 01 Jan 1970 00:00:00 GMT",
-                         &cookie_name);
+                         "Expires=Thu, 01 Jan 1970 00:00:00 GMT%V",
+                         &cookie_name, &domain_attr);
     }
 
     set_cookie->value.len = p - set_cookie->value.data;
@@ -620,7 +685,7 @@ ngx_oidc_session_set_permanent_cookie(ngx_http_request_t *r,
     ngx_http_oidc_provider_t *provider, ngx_str_t *session_id)
 {
     ngx_table_elt_t *set_cookie;
-    ngx_str_t cookie_name, cookie_value;
+    ngx_str_t cookie_name, cookie_value, domain_attr;
     u_char *p;
     size_t len;
     ngx_uint_t secure;
@@ -680,9 +745,14 @@ ngx_oidc_session_set_permanent_cookie(ngx_http_request_t *r,
                                       provider->session_timeout) - max_age_buf;
     }
 
+    /* Build optional "; Domain=<value>" attribute */
+    if (build_cookie_domain_attr(r, provider, &domain_attr) != NGX_OK) {
+        return NGX_ERROR;
+    }
+
     /* Calculate Set-Cookie header length */
     len = cookie_name.len + sizeof("=") - 1 + cookie_value.len
-          + sizeof("; Path=/; HttpOnly; SameSite=Lax") - 1;
+          + sizeof("; Path=/; HttpOnly; SameSite=Lax") - 1 + domain_attr.len;
     if (secure) {
         len += sizeof("; Secure") - 1;
     }
@@ -708,24 +778,25 @@ ngx_oidc_session_set_permanent_cookie(ngx_http_request_t *r,
         if (secure) {
             p = ngx_snprintf(
                 set_cookie->value.data, len,
-                "%V=%V; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=%V",
-                &cookie_name, &cookie_value, &max_age_str);
+                "%V=%V; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=%V%V",
+                &cookie_name, &cookie_value, &max_age_str, &domain_attr);
         } else {
             p = ngx_snprintf(set_cookie->value.data, len,
                              "%V=%V; Path=/; HttpOnly; "
-                             "SameSite=Lax; Max-Age=%V",
-                             &cookie_name, &cookie_value, &max_age_str);
+                             "SameSite=Lax; Max-Age=%V%V",
+                             &cookie_name, &cookie_value, &max_age_str,
+                             &domain_attr);
         }
     } else {
         /* Session cookie without Max-Age */
         if (secure) {
             p = ngx_snprintf(set_cookie->value.data, len,
-                             "%V=%V; Path=/; HttpOnly; Secure; SameSite=Lax",
-                             &cookie_name, &cookie_value);
+                             "%V=%V; Path=/; HttpOnly; Secure; SameSite=Lax%V",
+                             &cookie_name, &cookie_value, &domain_attr);
         } else {
             p = ngx_snprintf(set_cookie->value.data, len,
-                             "%V=%V; Path=/; HttpOnly; SameSite=Lax",
-                             &cookie_name, &cookie_value);
+                             "%V=%V; Path=/; HttpOnly; SameSite=Lax%V",
+                             &cookie_name, &cookie_value, &domain_attr);
         }
     }
 
@@ -743,7 +814,7 @@ ngx_oidc_session_clear_permanent_cookie(ngx_http_request_t *r,
     ngx_http_oidc_provider_t *provider)
 {
     ngx_table_elt_t *set_cookie;
-    ngx_str_t cookie_name;
+    ngx_str_t cookie_name, domain_attr;
     u_char *p;
     size_t len;
     ngx_uint_t secure;
@@ -766,10 +837,17 @@ ngx_oidc_session_clear_permanent_cookie(ngx_http_request_t *r,
     secure = 0;
 #endif
 
+    /* Build optional "; Domain=<value>" attribute (must match the set cookie
+       so the browser deletes it) */
+    if (build_cookie_domain_attr(r, provider, &domain_attr) != NGX_OK) {
+        return NGX_ERROR;
+    }
+
     /* Calculate Set-Cookie header length */
     len = cookie_name.len
           + sizeof("=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; "
-                   "Expires=Thu, 01 Jan 1970 00:00:00 GMT") - 1;
+                   "Expires=Thu, 01 Jan 1970 00:00:00 GMT") - 1
+          + domain_attr.len;
     if (secure) {
         len += sizeof("; Secure") - 1;
     }
@@ -790,13 +868,13 @@ ngx_oidc_session_clear_permanent_cookie(ngx_http_request_t *r,
     if (secure) {
         p = ngx_snprintf(set_cookie->value.data, len,
                          "%V=; Path=/; HttpOnly; Secure; SameSite=Lax; "
-                         "Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT",
-                         &cookie_name);
+                         "Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT%V",
+                         &cookie_name, &domain_attr);
     } else {
         p = ngx_snprintf(set_cookie->value.data, len,
                          "%V=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; "
-                         "Expires=Thu, 01 Jan 1970 00:00:00 GMT",
-                         &cookie_name);
+                         "Expires=Thu, 01 Jan 1970 00:00:00 GMT%V",
+                         &cookie_name, &domain_attr);
     }
 
     set_cookie->value.len = p - set_cookie->value.data;

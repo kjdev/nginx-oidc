@@ -1589,7 +1589,7 @@ callback_phase_complete(ngx_http_request_t *r, ngx_http_oidc_ctx_t *ctx,
         }
 
         /* Clear temporary callback cookie */
-        if (ngx_oidc_session_clear_temporary_cookie(r) != NGX_OK) {
+        if (ngx_oidc_session_clear_temporary_cookie(r, provider) != NGX_OK) {
             ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
                           "oidc_handler_callback: [SESSION_SAVE] "
                           "failed to clear temporary callback cookie");

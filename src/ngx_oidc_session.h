@@ -121,11 +121,14 @@ ngx_int_t ngx_oidc_session_set_temporary_cookie(ngx_http_request_t *r,
 /**
  * Clear temporary session cookie
  *
- * @param[in] r  HTTP request context
+ * @param[in] r         HTTP request context
+ * @param[in] provider  OIDC provider configuration (for Domain attribute;
+ *                      must match the set cookie so the browser deletes it)
  *
  * @return NGX_OK on success, NGX_ERROR on failure
  */
-ngx_int_t ngx_oidc_session_clear_temporary_cookie(ngx_http_request_t *r);
+ngx_int_t ngx_oidc_session_clear_temporary_cookie(ngx_http_request_t *r,
+    ngx_http_oidc_provider_t *provider);
 
 /**
  * Get permanent session ID from cookie
