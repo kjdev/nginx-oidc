@@ -207,6 +207,21 @@ Default: NGX_OIDC_SESSION
 
 The session cookie name. When using multiple providers, set a different cookie name for each provider. Using the same cookie name causes session conflicts and prevents proper operation.
 
+#### cookie_domain
+
+```
+Syntax:  cookie_domain <domain>;
+Default: —
+```
+
+The `Domain` attribute of the session cookies. When set, the module adds `Domain=<domain>` to every session cookie it issues (both the temporary callback cookie and the permanent session cookie). Specify `.example.com` when you want to share a session across subdomains such as `foo.example.com` and `bar.example.com`.
+
+When unset, no `Domain` attribute is added and the cookie is sent only to the issuing host (the default behavior).
+
+Safety attributes such as `HttpOnly`, `Secure`, and `SameSite` are always applied by the module and cannot be changed or removed via this directive.
+
+> **Security note**: Widening `Domain` to a parent domain (e.g., `.example.com`) causes the cookie to be sent to every subdomain under it. If an untrusted subdomain exists under the same parent domain, this can become a leakage path for the session cookie. Restrict it to a parent domain that contains only the subdomains that must share the session.
+
 #### scopes
 
 ```
