@@ -26,6 +26,13 @@
         (offsetof(type, field1) \
          + offsetof(__typeof__(((type *) 0)->field1), field2))
 
+#if defined(ANGIE_VERSION)
+#define node_loc_conf(x) (x)->conf->loc_conf
+#else
+#define node_loc_conf(x) (x)->loc_conf
+#endif
+
+
 /* Configuration lifecycle */
 static void *ngx_http_oidc_create_main_conf(ngx_conf_t *cf);
 /* Configuration validation */
@@ -1608,16 +1615,16 @@ ngx_http_oidc_search_enabled_in_tree(ngx_http_location_tree_node_t *node)
     }
 
     /* Check exact match location */
-    if (node->exact && node->exact->loc_conf) {
-        olcf = node->exact->loc_conf[ngx_http_oidc_module.ctx_index];
+    if (node->exact && node_loc_conf(node->exact)) {
+        olcf = node_loc_conf(node->exact)[ngx_http_oidc_module.ctx_index];
         if (olcf && olcf->enabled == 1) {
             return NGX_OK;
         }
     }
 
     /* Check inclusive match location */
-    if (node->inclusive && node->inclusive->loc_conf) {
-        olcf = node->inclusive->loc_conf[ngx_http_oidc_module.ctx_index];
+    if (node->inclusive && node_loc_conf(node->inclusive)) {
+        olcf = node_loc_conf(node->inclusive)[ngx_http_oidc_module.ctx_index];
         if (olcf && olcf->enabled == 1) {
             return NGX_OK;
         }
@@ -1667,7 +1674,11 @@ ngx_http_oidc_find_location(ngx_conf_t *cf, ngx_str_t *location_name)
 {
     ngx_http_core_main_conf_t *cmcf;
     ngx_http_core_srv_conf_t **cscfp;
+#if defined(ANGIE_VERSION)
+    ngx_http_core_loc_t      **clcfp;
+#else
     ngx_http_core_loc_conf_t **clcfp;
+#endif
     ngx_uint_t s;
 
     /* Get main HTTP configuration */
@@ -1735,7 +1746,11 @@ ngx_http_oidc_is_enabled_anywhere(ngx_conf_t *cf)
 {
     ngx_http_core_main_conf_t *cmcf;
     ngx_http_core_srv_conf_t **cscfp;
+#if defined(ANGIE_VERSION)
+    ngx_http_core_loc_t      **clcfp;
+#else
     ngx_http_core_loc_conf_t **clcfp;
+#endif
     ngx_http_oidc_loc_conf_t *olcf;
     ngx_uint_t s;
 
@@ -1761,7 +1776,8 @@ ngx_http_oidc_is_enabled_anywhere(ngx_conf_t *cf)
         /* Check named locations */
         if (cscf->named_locations) {
             for (clcfp = cscf->named_locations; *clcfp; clcfp++) {
-                olcf = (*clcfp)->loc_conf[ngx_http_oidc_module.ctx_index];
+                olcf = node_loc_conf(*clcfp)[ngx_http_oidc_module.ctx_index];
+
                 if (olcf && olcf->enabled == 1) {
                     return NGX_OK;
                 }
