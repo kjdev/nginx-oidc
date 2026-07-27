@@ -135,7 +135,7 @@ jobs:
           curl -sL -o nginx-mod-lua.tar.gz https://github.com/openresty/lua-nginx-module/archive/refs/tags/v0.10.26.tar.gz
           tar xf nginx-mod-lua.tar.gz
           # Download NDK module
-          curl -sL -o nginx-mod-ndk.tar.gz https://github.com/vision5/ngx_devel_kit/archive/refs/tags/v0.3.4.tar.gz
+          curl -sL -o nginx-mod-ndk.tar.gz https://github.com/dvershinin/ngx_devel_kit/archive/refs/tags/v0.3.5.tar.gz
           tar xf nginx-mod-ndk.tar.gz
           # Download Nginx
           curl -sL -o "nginx-${nginx_version}.tar.gz" "https://nginx.org/download/nginx-${nginx_version}.tar.gz"
@@ -150,7 +150,7 @@ jobs:
             --with-pcre \
             --with-pcre-jit \
             --add-dynamic-module=../lua-nginx-module-0.10.26 \
-            --add-dynamic-module=../ngx_devel_kit-0.3.4 \
+            --add-dynamic-module=../ngx_devel_kit-0.3.5 \
             --add-dynamic-module=..
           make -j
           # Copy module
