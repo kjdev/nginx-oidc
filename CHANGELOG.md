@@ -5,8 +5,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-04
+
 ### Added
 
+- Support for [Angie](https://github.com/webserver-llc/angie): conditional compilation accounts for Angie's `ngx_http_location_queue_t` layout change, so the module builds and runs on Angie in addition to nginx
 - `cookie_domain` directive (provider scope): configures the `Domain` attribute of the session cookies. When set, `Domain=<value>` is added to both the temporary and permanent cookies, enabling session sharing across subdomains (e.g. `foo.example.com` and `bar.example.com`). The `HttpOnly` / `Secure` / `SameSite` safety attributes remain module-controlled and cannot be removed
 
 ### Security
