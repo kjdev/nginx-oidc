@@ -241,6 +241,8 @@ typedef struct {
     ngx_flag_t                bearer;
     /** expected Bearer access token audience (defaults to client_id) */
     ngx_http_complex_value_t *bearer_audience;
+    /** expected Bearer access token typ header (RFC 9068; unset = no check) */
+    ngx_http_complex_value_t *bearer_typ;
 } ngx_http_oidc_loc_conf_t;
 
 extern ngx_module_t ngx_http_oidc_module;

@@ -43,19 +43,21 @@ typedef enum {
  * - expected_audience: Expected aud claim value
  * - expected_nonce: Expected nonce claim value (mandatory for ID tokens,
  *   ignored for access tokens)
+ * - expected_typ: Expected typ header value for access tokens
+ *   (e.g., "at+jwt"; NULL or empty means no typ check)
  * - access_token: Access token for at_hash validation (optional)
  *
  * Validation Options:
  * - clock_skew_tolerance: Allowed time difference in seconds (default: 300)
- * - token_type: Expected typ header value (e.g., "JWT")
  */
 typedef struct {
     ngx_str_t *token;
-    /** expected claim values */
+    /** expected claim/header values */
     struct {
         ngx_str_t *issuer;
         ngx_str_t *audience;
         ngx_str_t *nonce;
+        ngx_str_t *typ;
     } expected;
     /** access token for at_hash validation */
     ngx_str_t                 *access_token;

@@ -289,6 +289,11 @@ static ngx_command_t ngx_http_oidc_commands[] = {
       NGX_CONF_TAKE1, ngx_http_set_complex_value_slot,
       NGX_HTTP_LOC_CONF_OFFSET,
       offsetof(ngx_http_oidc_loc_conf_t, bearer_audience), NULL },
+    { ngx_string("auth_oidc_bearer_typ"),
+      NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
+      NGX_CONF_TAKE1, ngx_http_set_complex_value_slot,
+      NGX_HTTP_LOC_CONF_OFFSET,
+      offsetof(ngx_http_oidc_loc_conf_t, bearer_typ), NULL },
     { ngx_string("oidc_cleanup_interval"),
       NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
       NGX_CONF_TAKE1, ngx_conf_set_num_slot,
@@ -2069,6 +2074,10 @@ ngx_http_oidc_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
 
     if (conf->bearer_audience == NULL && !conf->explicit_off) {
         conf->bearer_audience = prev->bearer_audience;
+    }
+
+    if (conf->bearer_typ == NULL && !conf->explicit_off) {
+        conf->bearer_typ = prev->bearer_typ;
     }
 
     return NGX_CONF_OK;

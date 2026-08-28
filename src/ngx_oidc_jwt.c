@@ -37,7 +37,8 @@ typedef enum {
     JWT_ERR_INVALID_AUDIENCE,  /* Audience mismatch */
     JWT_ERR_TOKEN_EXPIRED,     /* Token expired */
     JWT_ERR_INVALID_NONCE,     /* Nonce mismatch */
-    JWT_ERR_INVALID_TOKEN_TYPE, /* nonce present in an access token */
+    JWT_ERR_INVALID_TOKEN_TYPE, /* typ header mismatch, or nonce present
+                                    in an access token */
     JWT_ERR_SIGNATURE_FAILED,  /* Signature / at_hash mismatch */
     JWT_ERR_MISSING_CLAIM,     /* Required claim missing */
     JWT_ERR_JSON_PARSE,        /* JSON parsing error */
@@ -321,7 +322,7 @@ jwt_parse_claims(nxe_json_t *root, jwt_claims_t *claims, ngx_pool_t *pool)
  */
 static jwt_validation_result_t
 jwt_validate_claims(ngx_http_request_t *r, const jwt_claims_t *claims,
-    const char *algorithm,
+    const char *algorithm, const ngx_str_t *typ,
     const ngx_oidc_jwt_validation_params_t *params)
 {
     time_t now = ngx_time();
@@ -475,6 +476,21 @@ jwt_validate_claims(ngx_http_request_t *r, const jwt_claims_t *claims,
         break;
 
     case NGX_OIDC_JWT_TOKEN_ACCESS:
+
+        /* RFC 9068 typ header (opt-in via expected.typ) */
+        if (params->expected.typ && params->expected.typ->len > 0) {
+            if (typ == NULL || typ->len == 0
+                || typ->len != params->expected.typ->len
+                || ngx_memcmp(typ->data, params->expected.typ->data,
+                              params->expected.typ->len) != 0)
+            {
+                ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                              "oidc_jwt: access token typ header mismatch "
+                              "- got='%V', expected='%V'",
+                              typ, params->expected.typ);
+                return JWT_ERR_INVALID_TOKEN_TYPE;
+            }
+        }
 
         /* An ID token replayed as a Bearer access token carries a nonce;
          * access tokens must not. */
@@ -634,8 +650,11 @@ ngx_oidc_jwt_verify(ngx_http_request_t *r, ngx_str_t *token,
     nxe_jwx_token_t *jwt_token;
     nxe_jwx_jwks_t *jwks;
     nxe_json_t *payload_json;
+    nxe_json_t *header_json;
     const ngx_str_t *alg_str;
     char *alg_cstr = NULL;
+    ngx_str_t typ_value;
+    const ngx_str_t *typ = NULL;
     jwt_claims_t claims;
     jwt_validation_result_t result;
 
@@ -709,8 +728,16 @@ ngx_oidc_jwt_verify(ngx_http_request_t *r, ngx_str_t *token,
         alg_cstr = jwt_str_to_cstr(r->pool, alg_str);
     }
 
+    /* typ header, for RFC 9068 access token validation */
+    header_json = nxe_jwx_token_header(jwt_token);
+    if (header_json != NULL
+        && nxe_jwx_claims_get_string(header_json, "typ", &typ_value) == NGX_OK)
+    {
+        typ = &typ_value;
+    }
+
     /* Validate claims */
-    result = jwt_validate_claims(r, &claims, alg_cstr, params);
+    result = jwt_validate_claims(r, &claims, alg_cstr, typ, params);
     if (result != JWT_SUCCESS) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_jwt: JWT claims validation failed "

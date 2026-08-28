@@ -77,7 +77,7 @@ static ngx_int_t
 bearer_verify(ngx_http_request_t *r, ngx_http_oidc_provider_t *provider,
     ngx_http_oidc_loc_conf_t *olcf, ngx_http_oidc_ctx_t *ctx)
 {
-    ngx_str_t issuer, audience;
+    ngx_str_t issuer, audience, typ;
     ngx_str_t *jwks_uri;
     ngx_oidc_jwks_cache_node_t *jwks;
     ngx_oidc_jwt_validation_params_t params;
@@ -90,6 +90,15 @@ bearer_verify(ngx_http_request_t *r, ngx_http_oidc_provider_t *provider,
 
     if (bearer_audience(r, provider, olcf, &audience) != NGX_OK) {
         return NGX_ERROR;
+    }
+
+    if (olcf->bearer_typ != NULL) {
+        if (ngx_http_complex_value(r, olcf->bearer_typ, &typ) != NGX_OK) {
+            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                          "oidc_handler_bearer: failed to evaluate "
+                          "bearer typ");
+            return NGX_ERROR;
+        }
     }
 
     jwks_uri = ngx_oidc_metadata_get_jwks_uri(ctx->cached.metadata);
@@ -110,6 +119,9 @@ bearer_verify(ngx_http_request_t *r, ngx_http_oidc_provider_t *provider,
     ngx_memzero(&params, sizeof(ngx_oidc_jwt_validation_params_t));
     params.expected.issuer = &issuer;
     params.expected.audience = &audience;
+    if (olcf->bearer_typ != NULL) {
+        params.expected.typ = &typ;
+    }
     params.clock_skew = provider->clock_skew;
     params.token_type = NGX_OIDC_JWT_TOKEN_ACCESS;
 
