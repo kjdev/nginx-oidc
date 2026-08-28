@@ -18,6 +18,7 @@ The nginx OIDC module is a dynamic module that integrates authentication functio
 - **Multi-Provider Support**: Configure multiple OIDC providers simultaneously
 - **nginx Variables**: `$oidc_id_token`, `$oidc_access_token`, `$oidc_claim_*`, `$oidc_authenticated`, `$oidc_userinfo`
 - **Authentication Mode Control**: `auth_oidc_mode off | verify | require` (`off`=skip authentication, `verify`=verify only (no redirect for unauthenticated users), `require`=authentication required)
+- **Externally Obtained Access Token (Bearer) Verification**: `auth_oidc_bearer on;` authenticates API clients, SPAs, and mobile apps that present `Authorization: Bearer <jwt>` (a path independent of the cookie session)
 - **RP-Initiated Logout**: Logout processing in coordination with the OIDC provider
 
 ### Security
@@ -158,6 +159,8 @@ For details, see [DIRECTIVES.md](docs/DIRECTIVES.md).
 |---|---|---|
 | `auth_oidc` | Enable OIDC authentication | http, server, location |
 | `auth_oidc_mode` | Authentication mode control | http, server, location |
+| `auth_oidc_bearer` | Enable verification of externally obtained access tokens (Bearer) | http, server, location |
+| `auth_oidc_bearer_audience` | Audience used when verifying Bearer tokens | http, server, location |
 | `oidc_provider` | OIDC provider definition | http |
 | `oidc_session_store` | Session store definition | http |
 | `oidc_base_url` | Base URL for redirect URI | http, server, location |

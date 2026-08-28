@@ -587,6 +587,45 @@ server {
 }
 ```
 
+### Combined Configuration: Cookie for Browsers, Bearer for API Clients
+
+On the same server, browser requests are authenticated via the usual cookie
+session flow, while API clients, SPAs, and mobile apps that already hold an
+access token are authenticated via an `Authorization: Bearer <jwt>` header.
+`auth_oidc_bearer` is independent of `auth_oidc_mode`, so it can be enabled
+per location.
+
+**Note**: The following is an excerpt of the server block. The actual
+configuration also requires `oidc_session_store` and `/_oidc_http_fetch`
+location (see [Basic Configuration with Memory Store](#basic-configuration-with-memory-store)).
+
+```nginx
+server {
+    auth_oidc my_provider;
+
+    # Browser-facing pages: require cookie session authentication
+    location / {
+        proxy_pass http://frontend;
+        proxy_set_header X-User-ID $oidc_claim_sub;
+    }
+
+    # API endpoint: verify an externally obtained access token (Bearer)
+    # If the Authorization header does not use the Bearer scheme,
+    # processing falls through to the usual cookie session check
+    location /api {
+        auth_oidc_bearer on;
+        auth_oidc_bearer_audience "my-api";
+
+        proxy_pass http://api_backend;
+        proxy_set_header X-User-ID $oidc_claim_sub;
+    }
+}
+```
+
+Only `$oidc_claim_*` and `$oidc_authenticated` are available on the Bearer
+path. `$oidc_id_token` / `$oidc_access_token` / `$oidc_userinfo` remain empty
+(see [DIRECTIVES.md#auth_oidc_bearer](DIRECTIVES.md#auth_oidc_bearer) for details).
+
 ## Related Documents
 
 - [README.md](../README.md): Module overview

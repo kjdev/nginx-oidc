@@ -15,6 +15,8 @@ For configuration examples, refer to the following documents:
 |---|---|---|
 | [auth_oidc](#auth_oidc) | Enable OIDC authentication | http, server, location |
 | [auth_oidc_mode](#auth_oidc_mode) | Control authentication mode | http, server, location |
+| [auth_oidc_bearer](#auth_oidc_bearer) | Enable verification of externally obtained access tokens (Bearer) | http, server, location |
+| [auth_oidc_bearer_audience](#auth_oidc_bearer_audience) | Audience used when verifying Bearer tokens | http, server, location |
 | [oidc_cleanup_interval](#oidc_cleanup_interval) | Frequency of expired-entry cleanup | http, server, location |
 | [oidc_provider](#oidc_provider) | Define an OIDC provider | http |
 | [oidc_session_store](#oidc_session_store) | Define a session store | http |
@@ -113,6 +115,59 @@ server {
 - **`auth_oidc_mode off`**: The provider association is inherited from the parent context, but authentication processing is skipped. `$oidc_authenticated` returns `"0"`, and other `$oidc_*` variables are empty. However, callback requests continue to be processed.
 
 Normally `auth_oidc_mode off` is sufficient, but use `auth_oidc off` when you want to completely exclude OIDC module processing (e.g., static file serving).
+
+### auth_oidc_bearer
+
+```
+Syntax:  auth_oidc_bearer on | off;
+Default: off
+Context: http, server, location
+```
+
+Enables authentication for clients (API clients, SPAs, mobile apps) that present an access token obtained externally from the OIDC provider via an `Authorization: Bearer <jwt>` header. This is an independent setting orthogonal to `auth_oidc_mode`.
+
+**Supported token format**: JWT-formatted access tokens only. Opaque tokens (token verification via RFC 7662 Introspection) are not supported.
+
+**Behavior**:
+- If the request's `Authorization` header uses the `Bearer` scheme, verification is always performed, and either success or a 401 is the outcome. There is no fallback to the cookie session (a 401 is returned even if `auth_oidc_mode verify` is set).
+- Schemes other than `Bearer` (e.g. `Basic`) or a missing `Authorization` header are ignored, and processing proceeds as usual to the cookie session check.
+- Verification targets the issuer (fixed to the provider's issuer) and the audience (see [auth_oidc_bearer_audience](#auth_oidc_bearer_audience)).
+- On verification failure, a 401 is returned with a `WWW-Authenticate: Bearer error="..."` header (RFC 6750).
+- Only [$oidc_claim_*](#oidc_claim_) and [$oidc_authenticated](#oidc_authenticated) are available on the Bearer path. [$oidc_id_token](#oidc_id_token) / [$oidc_access_token](#oidc_access_token) / [$oidc_userinfo](#oidc_userinfo) remain empty.
+
+**Usage example**:
+```nginx
+location /api {
+    auth_oidc my_provider;
+    auth_oidc_bearer on;
+
+    proxy_pass http://api_backend;
+    proxy_set_header X-User-ID $oidc_claim_sub;
+}
+```
+
+### auth_oidc_bearer_audience
+
+```
+Syntax:  auth_oidc_bearer_audience <value>;
+Default: — (falls back to the provider's client_id if unset)
+Context: http, server, location
+```
+
+Specifies the audience (the `aud` claim) used when verifying access tokens with `auth_oidc_bearer on`. If unset, the provider's `client_id` is used.
+
+A complex value (a string containing variables) can be specified.
+
+**Usage example**:
+```nginx
+location /api {
+    auth_oidc my_provider;
+    auth_oidc_bearer on;
+    auth_oidc_bearer_audience "my-api";
+
+    proxy_pass http://api_backend;
+}
+```
 
 ### oidc_cleanup_interval
 
@@ -857,6 +912,7 @@ OpenID Connect ID token (JWT).
 **Value**:
 - Authenticated: ID token string (JWT format)
 - Unauthenticated: Empty (variable undefined)
+- Authenticated via Bearer ([auth_oidc_bearer](#auth_oidc_bearer)): Empty (no ID token exists on this path)
 
 **Usage example**:
 ```nginx
@@ -873,6 +929,7 @@ OAuth 2.0 access token.
 **Value**:
 - Authenticated: Access token string
 - Unauthenticated: Empty (variable undefined)
+- Authenticated via Bearer ([auth_oidc_bearer](#auth_oidc_bearer)): Empty (the access token lives in the request header and is not retained by the module)
 
 **Usage example**:
 ```nginx
@@ -891,6 +948,7 @@ JWT claim values (prefix variable).
 **Value**:
 - Authenticated: The value of the specified claim
 - Unauthenticated or claim does not exist: Empty (variable undefined)
+- Authenticated via Bearer ([auth_oidc_bearer](#auth_oidc_bearer)): The claim value from the verified access token (only available from the access phase onward)
 
 **Value types**:
 - String / number / boolean: stringified as-is (booleans become `true` / `false`).
@@ -953,6 +1011,8 @@ location / {
 
 When using `auth_oidc_mode verify`, use this variable to make authentication decisions on the backend application side.
 
+This also becomes `"1"` when a Bearer token is successfully verified via [auth_oidc_bearer](#auth_oidc_bearer).
+
 ### $oidc_userinfo
 
 Information retrieved from UserInfo (JSON format).
@@ -960,6 +1020,7 @@ Information retrieved from UserInfo (JSON format).
 **Value**:
 - When `userinfo on` or `userinfo <location>` and authenticated: UserInfo JSON string
 - Otherwise: Empty (variable undefined)
+- Authenticated via Bearer ([auth_oidc_bearer](#auth_oidc_bearer)): Empty (the Bearer path never calls the UserInfo endpoint)
 
 **Usage example**:
 ```nginx
