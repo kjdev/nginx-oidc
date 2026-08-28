@@ -17,6 +17,7 @@ For configuration examples, refer to the following documents:
 | [auth_oidc_mode](#auth_oidc_mode) | Control authentication mode | http, server, location |
 | [auth_oidc_bearer](#auth_oidc_bearer) | Enable verification of externally obtained access tokens (Bearer) | http, server, location |
 | [auth_oidc_bearer_audience](#auth_oidc_bearer_audience) | Audience used when verifying Bearer tokens | http, server, location |
+| [auth_oidc_bearer_typ](#auth_oidc_bearer_typ) | JWT header typ used when verifying Bearer tokens | http, server, location |
 | [oidc_cleanup_interval](#oidc_cleanup_interval) | Frequency of expired-entry cleanup | http, server, location |
 | [oidc_provider](#oidc_provider) | Define an OIDC provider | http |
 | [oidc_session_store](#oidc_session_store) | Define a session store | http |
@@ -132,6 +133,8 @@ Enables authentication for clients (API clients, SPAs, mobile apps) that present
 - If the request's `Authorization` header uses the `Bearer` scheme, verification is always performed, and either success or a 401 is the outcome. There is no fallback to the cookie session (a 401 is returned even if `auth_oidc_mode verify` is set).
 - Schemes other than `Bearer` (e.g. `Basic`) or a missing `Authorization` header are ignored, and processing proceeds as usual to the cookie session check.
 - Verification targets the issuer (fixed to the provider's issuer) and the audience (see [auth_oidc_bearer_audience](#auth_oidc_bearer_audience)).
+- The JWT header `typ` is verified only if [auth_oidc_bearer_typ](#auth_oidc_bearer_typ) is set (unset means no `typ` check).
+- A JWT carrying a `nonce` claim (such as an ID token issued by this module) is always rejected regardless of configuration, preventing an ID token from being replayed as a Bearer access token.
 - On verification failure, a 401 is returned with a `WWW-Authenticate: Bearer error="..."` header (RFC 6750).
 - Only [$oidc_claim_*](#oidc_claim_) and [$oidc_authenticated](#oidc_authenticated) are available on the Bearer path. [$oidc_id_token](#oidc_id_token) / [$oidc_access_token](#oidc_access_token) / [$oidc_userinfo](#oidc_userinfo) remain empty.
 
@@ -164,6 +167,29 @@ location /api {
     auth_oidc my_provider;
     auth_oidc_bearer on;
     auth_oidc_bearer_audience "my-api";
+
+    proxy_pass http://api_backend;
+}
+```
+
+### auth_oidc_bearer_typ
+
+```
+Syntax:  auth_oidc_bearer_typ <value>;
+Default: — (typ is not verified if unset)
+Context: http, server, location
+```
+
+Specifies the value required in the JWT header `typ` when verifying access tokens with `auth_oidc_bearer on`. For RFC 9068-compliant providers, specify `"at+jwt"`. If unset, `typ` is not verified (comparison is case-sensitive and does not accept an `application/` prefix).
+
+A complex value (a string containing variables) can be specified.
+
+**Usage example**:
+```nginx
+location /api {
+    auth_oidc my_provider;
+    auth_oidc_bearer on;
+    auth_oidc_bearer_typ "at+jwt";
 
     proxy_pass http://api_backend;
 }

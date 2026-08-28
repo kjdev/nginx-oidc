@@ -161,6 +161,7 @@ For details, see [DIRECTIVES.md](docs/DIRECTIVES.md).
 | `auth_oidc_mode` | Authentication mode control | http, server, location |
 | `auth_oidc_bearer` | Enable verification of externally obtained access tokens (Bearer) | http, server, location |
 | `auth_oidc_bearer_audience` | Audience used when verifying Bearer tokens | http, server, location |
+| `auth_oidc_bearer_typ` | JWT header typ used when verifying Bearer tokens | http, server, location |
 | `oidc_provider` | OIDC provider definition | http |
 | `oidc_session_store` | Session store definition | http |
 | `oidc_base_url` | Base URL for redirect URI | http, server, location |
