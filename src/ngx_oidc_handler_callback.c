@@ -699,12 +699,14 @@ callback_verify_id_token(ngx_http_request_t *r,
     }
 
     /* Setup verification parameters */
+    ngx_memzero(&params, sizeof(ngx_oidc_jwt_validation_params_t));
     params.token = &id_token;
     params.expected.issuer = &issuer_url;
     params.expected.audience = &client_id;
     params.expected.nonce = expected_nonce;
     params.access_token = &access_token; /* For at_hash validation */
     params.clock_skew = provider->clock_skew;
+    params.token_type = NGX_OIDC_JWT_TOKEN_ID;
 
     /* Get metadata to obtain JWKS URI */
     rc = ngx_oidc_metadata_get(r, &issuer_url, &metadata);

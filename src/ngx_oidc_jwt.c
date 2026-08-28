@@ -454,16 +454,35 @@ jwt_validate_claims(ngx_http_request_t *r, const jwt_claims_t *claims,
         }
     }
 
-    /* Validate nonce (mandatory for ID tokens) */
-    if (claims->nonce.len == 0 || !params->expected.nonce) {
-        return JWT_ERR_MISSING_CLAIM;
-    }
+    switch (params->token_type) {
 
-    if (claims->nonce.len != params->expected.nonce->len
-        || CRYPTO_memcmp(claims->nonce.data, params->expected.nonce->data,
-                         params->expected.nonce->len) != 0)
-    {
-        return JWT_ERR_INVALID_NONCE;
+    case NGX_OIDC_JWT_TOKEN_ID:
+
+        /* Validate nonce (mandatory for ID tokens) */
+        if (claims->nonce.len == 0 || !params->expected.nonce) {
+            return JWT_ERR_MISSING_CLAIM;
+        }
+
+        if (claims->nonce.len != params->expected.nonce->len
+            || CRYPTO_memcmp(claims->nonce.data,
+                             params->expected.nonce->data,
+                             params->expected.nonce->len) != 0)
+        {
+            return JWT_ERR_INVALID_NONCE;
+        }
+
+        break;
+
+    case NGX_OIDC_JWT_TOKEN_ACCESS:
+
+        /* Access tokens carry no nonce claim to validate. */
+        break;
+
+    default:
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                      "oidc_jwt: unknown token_type (%d) in validation "
+                      "params", params->token_type);
+        return JWT_ERR_INVALID_FORMAT;
     }
 
     /* Validate at_hash if access_token provided and at_hash exists */

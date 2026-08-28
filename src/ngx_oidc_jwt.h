@@ -15,6 +15,20 @@
 typedef struct ngx_oidc_jwks_cache_node_s ngx_oidc_jwks_cache_node_t;
 
 /**
+ * JWT token kind, controls nonce validation branching
+ *
+ * NGX_OIDC_JWT_TOKEN_UNSET is deliberately the zero value: params structs
+ * are stack-declared by callers, so a missed initialization must not
+ * silently skip nonce validation for an ID token. A flag such as
+ * `skip_nonce` would not give this fail-closed guarantee.
+ */
+typedef enum {
+    NGX_OIDC_JWT_TOKEN_UNSET  = 0,
+    NGX_OIDC_JWT_TOKEN_ID     = 1,
+    NGX_OIDC_JWT_TOKEN_ACCESS = 2
+} ngx_oidc_jwt_token_type_t;
+
+/**
  * JWT Validation Parameters
  *
  * Configuration for JWT validation process.
@@ -22,11 +36,13 @@ typedef struct ngx_oidc_jwks_cache_node_s ngx_oidc_jwks_cache_node_t;
  *
  * Required Fields:
  * - token: JWT to validate (header.payload.signature)
+ * - token_type: ID or ACCESS; controls nonce validation
  *
  * Expected Values (for validation):
  * - expected_issuer: Expected iss claim value
  * - expected_audience: Expected aud claim value
- * - expected_nonce: Expected nonce claim value (mandatory for ID tokens)
+ * - expected_nonce: Expected nonce claim value (mandatory for ID tokens,
+ *   ignored for access tokens)
  * - access_token: Access token for at_hash validation (optional)
  *
  * Validation Options:
@@ -45,6 +61,8 @@ typedef struct {
     ngx_str_t *access_token;
     /** clock skew tolerance (seconds) */
     time_t     clock_skew;
+    /** ID token or access token; controls nonce validation */
+    ngx_oidc_jwt_token_type_t token_type;
 } ngx_oidc_jwt_validation_params_t;
 
 /**
