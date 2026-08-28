@@ -249,3 +249,52 @@ GET /bearer-helper?path=/bearer-verify&auth=valid
 --- error_code: 200
 --- response_body_like
 authenticate:1
+
+=== bearer: ID token replayed as Bearer access token is rejected
+--- http_config
+    lua_package_path "$TEST_NGINX_LUA_DIR/?.lua;$TEST_NGINX_CONF_DIR/../lib/?.lua;;";
+    lua_shared_dict cookie_dict 1m;
+    include $TEST_NGINX_CONF_DIR/test-provider-bearer.conf;
+    include $TEST_NGINX_CONF_DIR/server-app.conf;
+    include $TEST_NGINX_CONF_DIR/stub-idp.conf;
+--- config
+    include $TEST_NGINX_CONF_DIR/location-fetch.conf;
+    auth_oidc test_bearer_provider;
+    include $TEST_NGINX_CONF_DIR/location-bearer.conf;
+--- request
+GET /bearer-helper?path=/bearer&auth=id-token
+--- error_code: 401
+--- response_headers_like
+WWW-Authenticate: Bearer error="invalid_token".*
+
+=== bearer: auth_oidc_bearer_typ accepts a matching typ header
+--- http_config
+    lua_package_path "$TEST_NGINX_LUA_DIR/?.lua;$TEST_NGINX_CONF_DIR/../lib/?.lua;;";
+    lua_shared_dict cookie_dict 1m;
+    include $TEST_NGINX_CONF_DIR/test-provider-bearer.conf;
+    include $TEST_NGINX_CONF_DIR/server-app.conf;
+    include $TEST_NGINX_CONF_DIR/stub-idp.conf;
+--- config
+    include $TEST_NGINX_CONF_DIR/location-fetch.conf;
+    auth_oidc test_bearer_provider;
+    include $TEST_NGINX_CONF_DIR/location-bearer.conf;
+--- request
+GET /bearer-typ-helper?state=typ_at_jwt
+--- error_code: 200
+
+=== bearer: auth_oidc_bearer_typ rejects a mismatched typ header
+--- http_config
+    lua_package_path "$TEST_NGINX_LUA_DIR/?.lua;$TEST_NGINX_CONF_DIR/../lib/?.lua;;";
+    lua_shared_dict cookie_dict 1m;
+    include $TEST_NGINX_CONF_DIR/test-provider-bearer.conf;
+    include $TEST_NGINX_CONF_DIR/server-app.conf;
+    include $TEST_NGINX_CONF_DIR/stub-idp.conf;
+--- config
+    include $TEST_NGINX_CONF_DIR/location-fetch.conf;
+    auth_oidc test_bearer_provider;
+    include $TEST_NGINX_CONF_DIR/location-bearer.conf;
+--- request
+GET /bearer-typ-helper
+--- error_code: 401
+--- response_headers_like
+WWW-Authenticate: Bearer error="invalid_token".*
