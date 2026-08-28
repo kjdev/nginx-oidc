@@ -37,6 +37,7 @@ ngx_module_srcs="\
   $nxe_jwx_module_srcs \
   $ngx_addon_dir/src/ngx_http_oidc_module.c \
   $ngx_addon_dir/src/ngx_oidc_handler_authenticate.c \
+  $ngx_addon_dir/src/ngx_oidc_handler_bearer.c \
   $ngx_addon_dir/src/ngx_oidc_handler_callback.c \
   $ngx_addon_dir/src/ngx_oidc_handler_logout.c \
   $ngx_addon_dir/src/ngx_oidc_handler_status.c \

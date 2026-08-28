@@ -20,6 +20,7 @@
 #include "ngx_oidc_handler_callback.h"
 #include "ngx_oidc_handler_logout.h"
 #include "ngx_oidc_handler_status.h"
+#include "ngx_oidc_handler_bearer.h"
 
 /* Helper macro for nested struct offsetof */
 #define ngx_offsetof_nested(type, field1, field2) \
@@ -278,6 +279,16 @@ static ngx_command_t ngx_http_oidc_commands[] = {
       NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
       NGX_CONF_TAKE1, ngx_http_oidc_set_mode,
       NGX_HTTP_LOC_CONF_OFFSET, 0, NULL },
+    { ngx_string("auth_oidc_bearer"),
+      NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
+      NGX_CONF_FLAG, ngx_conf_set_flag_slot,
+      NGX_HTTP_LOC_CONF_OFFSET,
+      offsetof(ngx_http_oidc_loc_conf_t, bearer), NULL },
+    { ngx_string("auth_oidc_bearer_audience"),
+      NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
+      NGX_CONF_TAKE1, ngx_http_set_complex_value_slot,
+      NGX_HTTP_LOC_CONF_OFFSET,
+      offsetof(ngx_http_oidc_loc_conf_t, bearer_audience), NULL },
     { ngx_string("oidc_cleanup_interval"),
       NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
       NGX_CONF_TAKE1, ngx_conf_set_num_slot,
@@ -582,6 +593,15 @@ access_determine_request_type_late(ngx_http_request_t *r,
     /* Check if this is a logout request */
     if (access_is_logout_request(r, provider) == NGX_OK) {
         ctx->request_type = NGX_HTTP_OIDC_REQUEST_TYPE_LOGOUT;
+        return;
+    }
+
+    /* An externally obtained Bearer access token always takes priority
+     * over any Cookie session; no fallback (ADR 0002 D6) */
+    if (olcf->bearer
+        && ngx_oidc_handler_bearer_token(r, &ctx->bearer.token) == NGX_OK)
+    {
+        ctx->request_type = NGX_HTTP_OIDC_REQUEST_TYPE_BEARER;
         return;
     }
 
@@ -1009,7 +1029,9 @@ ngx_http_oidc_access_handler(ngx_http_request_t *r)
         }
     }
 
-    if (ctx->request_type == NGX_HTTP_OIDC_REQUEST_TYPE_CALLBACK) {
+    if (ctx->request_type == NGX_HTTP_OIDC_REQUEST_TYPE_CALLBACK
+        || ctx->request_type == NGX_HTTP_OIDC_REQUEST_TYPE_BEARER)
+    {
         ngx_str_t *jwks_uri = ngx_oidc_metadata_get_jwks_uri(
             ctx->cached.metadata);
 
@@ -1044,6 +1066,9 @@ ngx_http_oidc_access_handler(ngx_http_request_t *r)
                                   "oidc_module: failed to fetch JWKS");
                     return NGX_HTTP_INTERNAL_SERVER_ERROR;
                 }
+
+                /* Fetch initiated successfully */
+                return NGX_AGAIN;
             } else if (rc == NGX_BUSY) {
                 /* Another request is fetching - wait and retry */
                 ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
@@ -1083,6 +1108,11 @@ ngx_http_oidc_access_handler(ngx_http_request_t *r)
     case NGX_HTTP_OIDC_REQUEST_TYPE_CALLBACK:
         /* Callback processing - metadata already fetched */
         return ngx_oidc_handler_callback(r);
+
+    case NGX_HTTP_OIDC_REQUEST_TYPE_BEARER:
+        /* Bearer access token verification - metadata/JWKS already
+         * fetched */
+        return ngx_oidc_handler_bearer(r, provider);
 
     case NGX_HTTP_OIDC_REQUEST_TYPE_LOGOUT:
         /* Logout processing */
@@ -1675,7 +1705,7 @@ ngx_http_oidc_find_location(ngx_conf_t *cf, ngx_str_t *location_name)
     ngx_http_core_main_conf_t *cmcf;
     ngx_http_core_srv_conf_t **cscfp;
 #if defined(ANGIE_VERSION)
-    ngx_http_core_loc_t      **clcfp;
+    ngx_http_core_loc_t **clcfp;
 #else
     ngx_http_core_loc_conf_t **clcfp;
 #endif
@@ -1747,7 +1777,7 @@ ngx_http_oidc_is_enabled_anywhere(ngx_conf_t *cf)
     ngx_http_core_main_conf_t *cmcf;
     ngx_http_core_srv_conf_t **cscfp;
 #if defined(ANGIE_VERSION)
-    ngx_http_core_loc_t      **clcfp;
+    ngx_http_core_loc_t **clcfp;
 #else
     ngx_http_core_loc_conf_t **clcfp;
 #endif
@@ -2007,6 +2037,7 @@ ngx_http_oidc_create_loc_conf(ngx_conf_t *cf)
     olcf->enabled = NGX_CONF_UNSET;
     olcf->mode = NGX_HTTP_OIDC_MODE_UNSET;
     olcf->cleanup_interval = NGX_CONF_UNSET;
+    olcf->bearer = NGX_CONF_UNSET;
 
     return olcf;
 }
@@ -2020,6 +2051,7 @@ ngx_http_oidc_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
     ngx_conf_merge_value(conf->enabled, prev->enabled, 0);
     ngx_conf_merge_value(conf->cleanup_interval, prev->cleanup_interval,
                          NGX_OIDC_CLEANUP_INTERVAL_DEFAULT);
+    ngx_conf_merge_value(conf->bearer, prev->bearer, 0);
 
     if (conf->mode == NGX_HTTP_OIDC_MODE_UNSET) {
         conf->mode = (prev->mode != NGX_HTTP_OIDC_MODE_UNSET)
@@ -2033,6 +2065,10 @@ ngx_http_oidc_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
 
     if (conf->base_url == NULL && !conf->explicit_off) {
         conf->base_url = prev->base_url;
+    }
+
+    if (conf->bearer_audience == NULL && !conf->explicit_off) {
+        conf->bearer_audience = prev->bearer_audience;
     }
 
     return NGX_CONF_OK;
@@ -2540,6 +2576,7 @@ ngx_http_oidc_auth(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
     if (ngx_strcmp(value[1].data, "off") == 0) {
         olcf->enabled = 0;
         olcf->mode = NGX_HTTP_OIDC_MODE_OFF;
+        olcf->bearer = 0;
         olcf->explicit_off = 1;
         return NGX_CONF_OK;
     }

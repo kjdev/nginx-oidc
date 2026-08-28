@@ -58,11 +58,11 @@ typedef struct {
         ngx_str_t *nonce;
     } expected;
     /** access token for at_hash validation */
-    ngx_str_t *access_token;
+    ngx_str_t                 *access_token;
     /** clock skew tolerance (seconds) */
-    time_t     clock_skew;
+    time_t                     clock_skew;
     /** ID token or access token; controls nonce validation */
-    ngx_oidc_jwt_token_type_t token_type;
+    ngx_oidc_jwt_token_type_t  token_type;
 } ngx_oidc_jwt_validation_params_t;
 
 /**

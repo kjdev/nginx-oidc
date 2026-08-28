@@ -157,6 +157,7 @@ typedef enum {
     NGX_HTTP_OIDC_REQUEST_TYPE_LOGOUT,        /* ngx_http_oidc_logout() */
     NGX_HTTP_OIDC_REQUEST_TYPE_AUTHENTICATE,  /* ngx_http_oidc_authenticate() */
     NGX_HTTP_OIDC_REQUEST_TYPE_AUTHENTICATED, /* (already authenticated) */
+    NGX_HTTP_OIDC_REQUEST_TYPE_BEARER,        /* ngx_oidc_handler_bearer() */
     NGX_HTTP_OIDC_REQUEST_TYPE_COMPLETED      /* (callback completed) */
 } ngx_http_oidc_request_type_t;
 
@@ -186,6 +187,13 @@ typedef struct {
         /** provider metadata */
         ngx_oidc_metadata_cache_t *metadata;
     } cached;
+    /** Bearer authentication data (set only via ngx_oidc_handler_bearer) */
+    struct {
+        /** Authorization header credential, points into r->headers_in */
+        ngx_str_t   token;
+        /** decoded access token payload; non-NULL means verified */
+        nxe_json_t *payload;
+    } bearer;
     /** HTTP fetch subrequest parameters */
     struct {
         /** target URL */
@@ -229,6 +237,10 @@ typedef struct {
     ngx_http_complex_value_t *cookie_name;
     /** periodic cleanup interval (1/N requests trigger cleanup) */
     ngx_int_t                 cleanup_interval;
+    /** Bearer access token verification enabled flag */
+    ngx_flag_t                bearer;
+    /** expected Bearer access token audience (defaults to client_id) */
+    ngx_http_complex_value_t *bearer_audience;
 } ngx_http_oidc_loc_conf_t;
 
 extern ngx_module_t ngx_http_oidc_module;

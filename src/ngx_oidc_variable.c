@@ -37,10 +37,20 @@ var_get_token(ngx_http_request_t *r, ngx_http_variable_value_t *v,
     ngx_http_oidc_main_conf_t *omcf;
     ngx_http_oidc_loc_conf_t *olcf;
     ngx_http_oidc_provider_t *provider;
+    ngx_http_oidc_ctx_t *ctx;
     ngx_str_t provider_name, token_value;
     ngx_str_t *session_id;
     ngx_int_t rc;
     var_token_type_t token_type;
+
+    /* A verified Bearer access token has no session behind it, so the raw
+     * token strings normally read from the session store stay not_found
+     * (ADR 0002 D5). */
+    ctx = ngx_http_get_module_ctx(r, ngx_http_oidc_module);
+    if (ctx != NULL && ctx->bearer.payload != NULL) {
+        v->not_found = 1;
+        return NGX_OK;
+    }
 
     omcf = ngx_http_get_module_main_conf(r, ngx_http_oidc_module);
     olcf = ngx_http_get_module_loc_conf(r, ngx_http_oidc_module);
@@ -125,6 +135,102 @@ ngx_oidc_variable_access_token(ngx_http_request_t *r,
     return var_get_token(r, v, VAR_TOKEN_ACCESS);
 }
 
+/*
+ * Resolves the ID token / Bearer access token payload used by
+ * ngx_oidc_variable_claim() and ngx_oidc_variable_authenticated().
+ *
+ * A verified Bearer access token payload always takes priority; it has
+ * no session_id behind it, so *session_id is left NULL in that case
+ * (callers must not attempt a UserInfo fallback for it, ADR 0002 D5).
+ *
+ * Returns the payload, or NULL if none is available.
+ */
+static nxe_json_t *
+var_claim_payload(ngx_http_request_t *r, ngx_http_oidc_provider_t *provider,
+    ngx_str_t **session_id)
+{
+    ngx_http_oidc_ctx_t *ctx;
+    ngx_str_t *sid;
+    ngx_str_t token_value;
+    nxe_jwx_token_t *jwt_token;
+    nxe_json_t *payload_json;
+    ngx_int_t rc;
+
+    *session_id = NULL;
+
+    /* Get or create request context */
+    ctx = ngx_http_get_module_ctx(r, ngx_http_oidc_module);
+    if (ctx == NULL) {
+        ctx = ngx_pcalloc(r->pool, sizeof(ngx_http_oidc_ctx_t));
+        if (ctx == NULL) {
+            return NULL;
+        }
+        ngx_http_set_ctx(r, ctx, ngx_http_oidc_module);
+    }
+
+    if (ctx->bearer.payload != NULL) {
+        return ctx->bearer.payload;
+    }
+
+    /* Get session ID from cookie (permanent cookie contains session_id only) */
+    sid = ngx_oidc_session_get_permanent_id(r, provider);
+    if (sid == NULL) {
+        return NULL;
+    }
+
+    /* Check if payload is already cached for this session */
+    if (ctx->cached.id_token_payload != NULL
+        && ctx->cached.session_id.len == sid->len
+        && ngx_memcmp(ctx->cached.session_id.data, sid->data, sid->len)
+        == 0)
+    {
+        /* Use cached payload */
+        payload_json = ctx->cached.id_token_payload;
+        ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                       "oidc_variable: using cached JWT payload for session %V",
+                       sid);
+    } else {
+        /* Not cached, decode and cache via nxe-jwx */
+        rc = ngx_oidc_session_get_id_token(r, provider->session_store,
+                                           sid, &token_value);
+        if (rc != NGX_OK || token_value.len == 0) {
+            return NULL;
+        }
+
+        /* Decode the JWT.  The token (and the payload JSON it owns) is
+         * bound to r->pool, so no explicit cleanup is required. */
+        jwt_token = nxe_jwx_decode(&token_value, r->pool);
+        if (jwt_token == NULL) {
+            return NULL;
+        }
+
+        payload_json = nxe_jwx_token_payload(jwt_token);
+        if (payload_json == NULL) {
+            return NULL;
+        }
+
+        /* Cache the parsed payload for this request */
+        ctx->cached.id_token_payload = payload_json;
+
+        ctx->cached.session_id.len = sid->len;
+        ctx->cached.session_id.data = ngx_pnalloc(r->pool, sid->len);
+        if (ctx->cached.session_id.data != NULL) {
+            ngx_memcpy(ctx->cached.session_id.data, sid->data, sid->len);
+            ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                           "oidc_variable: cached JWT payload for session %V",
+                           sid);
+        } else {
+            /* Failed to allocate session ID, but we can still proceed
+             * with this request */
+            ctx->cached.session_id.len = 0;
+        }
+    }
+
+    *session_id = sid;
+
+    return payload_json;
+}
+
 ngx_int_t
 ngx_oidc_variable_claim(ngx_http_request_t *r, ngx_http_variable_value_t *v,
     uintptr_t data)
@@ -132,10 +238,8 @@ ngx_oidc_variable_claim(ngx_http_request_t *r, ngx_http_variable_value_t *v,
     ngx_http_oidc_main_conf_t *omcf;
     ngx_http_oidc_loc_conf_t *olcf;
     ngx_http_oidc_provider_t *provider;
-    ngx_http_oidc_ctx_t *ctx;
-    ngx_str_t provider_name, token_value, claim_name;
+    ngx_str_t provider_name, claim_name;
     ngx_str_t *session_id;
-    nxe_jwx_token_t *jwt_token;
     nxe_json_t *payload_json, *claim_value;
     nxe_json_t *userinfo_json = NULL;
     ngx_flag_t userinfo_to_free = 0;
@@ -172,74 +276,10 @@ ngx_oidc_variable_claim(ngx_http_request_t *r, ngx_http_variable_value_t *v,
         return NGX_OK;
     }
 
-    /* Get session ID from cookie (permanent cookie contains session_id only) */
-    session_id = ngx_oidc_session_get_permanent_id(r, provider);
-    if (session_id == NULL) {
+    payload_json = var_claim_payload(r, provider, &session_id);
+    if (payload_json == NULL) {
         v->not_found = 1;
         return NGX_OK;
-    }
-
-    /* Get or create request context */
-    ctx = ngx_http_get_module_ctx(r, ngx_http_oidc_module);
-    if (ctx == NULL) {
-        ctx = ngx_pcalloc(r->pool, sizeof(ngx_http_oidc_ctx_t));
-        if (ctx == NULL) {
-            v->not_found = 1;
-            return NGX_OK;
-        }
-        ngx_http_set_ctx(r, ctx, ngx_http_oidc_module);
-    }
-
-    /* Check if payload is already cached for this session */
-    if (ctx->cached.id_token_payload != NULL
-        && ctx->cached.session_id.len == session_id->len
-        && ngx_memcmp(ctx->cached.session_id.data, session_id->data,
-                      session_id->len) == 0)
-    {
-        /* Use cached payload */
-        payload_json = ctx->cached.id_token_payload;
-        ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                       "oidc_variable: using cached JWT payload for session %V",
-                       session_id);
-    } else {
-        /* Not cached, decode and cache via nxe-jwx */
-        rc = ngx_oidc_session_get_id_token(r, provider->session_store,
-                                           session_id, &token_value);
-        if (rc != NGX_OK || token_value.len == 0) {
-            v->not_found = 1;
-            return NGX_OK;
-        }
-
-        /* Decode the JWT.  The token (and the payload JSON it owns) is
-         * bound to r->pool, so no explicit cleanup is required. */
-        jwt_token = nxe_jwx_decode(&token_value, r->pool);
-        if (jwt_token == NULL) {
-            v->not_found = 1;
-            return NGX_OK;
-        }
-
-        payload_json = nxe_jwx_token_payload(jwt_token);
-        if (payload_json == NULL) {
-            v->not_found = 1;
-            return NGX_OK;
-        }
-
-        /* Cache the parsed payload for this request */
-        ctx->cached.id_token_payload = payload_json;
-
-        ctx->cached.session_id.len = session_id->len;
-        ctx->cached.session_id.data = ngx_pnalloc(r->pool, session_id->len);
-        if (ctx->cached.session_id.data != NULL) {
-            ngx_memcpy(ctx->cached.session_id.data, session_id->data,
-                       session_id->len);
-            ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                           "oidc_variable: cached JWT payload for session %V",
-                           session_id);
-        } else {
-            /* Failed to allocate session ID, but we can still proceed
-             * with this request */
-            ctx->cached.session_id.len = 0;
-        }
     }
 
     /* Extract claim name from variable name (skip "oidc_claim_" prefix) */
@@ -262,8 +302,9 @@ ngx_oidc_variable_claim(ngx_http_request_t *r, ngx_http_variable_value_t *v,
     claim_key[claim_name.len] = '\0';
 
     claim_value = nxe_json_object_get(payload_json, claim_key);
-    if (!claim_value) {
-        /* Claim not found in ID token, try UserInfo data */
+    if (!claim_value && session_id != NULL) {
+        /* Claim not found in ID token, try UserInfo data (unavailable
+         * for a Bearer-authenticated request, ADR 0002 D5) */
         ngx_str_t userinfo_data;
 
         rc = ngx_oidc_session_get_userinfo(r, provider->session_store,
@@ -284,15 +325,15 @@ ngx_oidc_variable_claim(ngx_http_request_t *r, ngx_http_variable_value_t *v,
                 }
             }
         }
+    }
 
-        if (!claim_value) {
-            /* Claim not found in both ID token and UserInfo */
-            if (userinfo_to_free) {
-                nxe_json_free(userinfo_json);
-            }
-            v->not_found = 1;
-            return NGX_OK;
+    if (!claim_value) {
+        /* Claim not found in both ID token and UserInfo */
+        if (userinfo_to_free) {
+            nxe_json_free(userinfo_json);
         }
+        v->not_found = 1;
+        return NGX_OK;
     }
 
     if (nxe_json_is_string(claim_value)) {
@@ -467,6 +508,7 @@ ngx_oidc_variable_authenticated(ngx_http_request_t *r,
     ngx_http_oidc_main_conf_t *omcf;
     ngx_http_oidc_loc_conf_t *olcf;
     ngx_http_oidc_provider_t *provider;
+    ngx_http_oidc_ctx_t *ctx;
     ngx_str_t provider_name, token_value;
     ngx_str_t *session_id;
     ngx_int_t rc;
@@ -504,6 +546,14 @@ ngx_oidc_variable_authenticated(ngx_http_request_t *r,
         return NGX_OK;
     }
 
+    /* A verified Bearer access token authenticates the request on its own,
+     * with no session behind it */
+    ctx = ngx_http_get_module_ctx(r, ngx_http_oidc_module);
+    if (ctx != NULL && ctx->bearer.payload != NULL) {
+        v->data = (u_char *) "1";
+        return NGX_OK;
+    }
+
     /* Get session ID from permanent cookie */
     session_id = ngx_oidc_session_get_permanent_id(r, provider);
     if (session_id == NULL) {
@@ -528,9 +578,19 @@ ngx_oidc_variable_userinfo(ngx_http_request_t *r, ngx_http_variable_value_t *v,
     ngx_http_oidc_loc_conf_t *olcf;
     ngx_http_oidc_main_conf_t *omcf;
     ngx_http_oidc_provider_t *provider;
+    ngx_http_oidc_ctx_t *ctx;
     ngx_str_t provider_name, userinfo_data;
     ngx_str_t *session_id;
     ngx_int_t rc;
+
+    /* A verified Bearer access token has no session behind it, so UserInfo
+     * data normally read from the session store stays not_found
+     * (ADR 0002 D5). */
+    ctx = ngx_http_get_module_ctx(r, ngx_http_oidc_module);
+    if (ctx != NULL && ctx->bearer.payload != NULL) {
+        v->not_found = 1;
+        return NGX_OK;
+    }
 
     /* Get location configuration */
     olcf = ngx_http_get_module_loc_conf(r, ngx_http_oidc_module);
