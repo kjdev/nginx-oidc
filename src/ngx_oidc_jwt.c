@@ -37,6 +37,7 @@ typedef enum {
     JWT_ERR_INVALID_AUDIENCE,  /* Audience mismatch */
     JWT_ERR_TOKEN_EXPIRED,     /* Token expired */
     JWT_ERR_INVALID_NONCE,     /* Nonce mismatch */
+    JWT_ERR_INVALID_TOKEN_TYPE, /* nonce present in an access token */
     JWT_ERR_SIGNATURE_FAILED,  /* Signature / at_hash mismatch */
     JWT_ERR_MISSING_CLAIM,     /* Required claim missing */
     JWT_ERR_JSON_PARSE,        /* JSON parsing error */
@@ -475,7 +476,15 @@ jwt_validate_claims(ngx_http_request_t *r, const jwt_claims_t *claims,
 
     case NGX_OIDC_JWT_TOKEN_ACCESS:
 
-        /* Access tokens carry no nonce claim to validate. */
+        /* An ID token replayed as a Bearer access token carries a nonce;
+         * access tokens must not. */
+        if (claims->nonce.len > 0) {
+            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                          "oidc_jwt: access token must not contain a "
+                          "nonce claim (looks like an ID token)");
+            return JWT_ERR_INVALID_TOKEN_TYPE;
+        }
+
         break;
 
     default:
