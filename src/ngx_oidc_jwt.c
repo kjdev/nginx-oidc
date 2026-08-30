@@ -484,10 +484,14 @@ jwt_validate_claims(ngx_http_request_t *r, const jwt_claims_t *claims,
                 || ngx_memcmp(typ->data, params->expected.typ->data,
                               params->expected.typ->len) != 0)
             {
+                static const ngx_str_t missing_typ = ngx_string("(missing)");
+                const ngx_str_t *typ_log = (typ != NULL && typ->len > 0)
+                                            ? typ : &missing_typ;
+
                 ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                               "oidc_jwt: access token typ header mismatch "
                               "- got='%V', expected='%V'",
-                              typ, params->expected.typ);
+                              typ_log, params->expected.typ);
                 return JWT_ERR_INVALID_TOKEN_TYPE;
             }
         }

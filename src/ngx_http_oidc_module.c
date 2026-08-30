@@ -1042,6 +1042,12 @@ ngx_http_oidc_access_handler(ngx_http_request_t *r)
 
         ngx_oidc_jwks_cache_node_t *jwks = NULL;
 
+        if (jwks_uri == NULL || jwks_uri->len == 0) {
+            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                          "oidc_module: JWKS URI not available in metadata");
+            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        }
+
         /* Check if JWKS is already cached */
         rc = ngx_oidc_jwks_get(r, jwks_uri, &jwks);
 
