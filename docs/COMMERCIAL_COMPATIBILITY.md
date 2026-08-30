@@ -11,7 +11,7 @@ This is a reference on the compatibility between the nginx OIDC module and the [
 - `oidc_session_store` directive (Redis session store)
 - `oidc_base_url` directive (reverse proxy support)
 - `oidc_status` directive (status endpoint)
-- `auth_oidc_bearer` / `auth_oidc_bearer_audience` directives (verification of externally obtained access tokens (Bearer); equivalent to NGINX Plus's `auth_jwt`)
+- `auth_oidc_bearer` / `auth_oidc_bearer_audience` / `auth_oidc_bearer_typ` directives (verification of externally obtained access tokens (Bearer); equivalent to NGINX Plus's `auth_jwt`)
 - `$oidc_authenticated` variable
 
 **License**: MIT License
@@ -48,6 +48,7 @@ This is a reference on the compatibility between the nginx OIDC module and the [
 | — | `oidc_status` | Original extension |
 | — | `auth_oidc_bearer` | Original extension (equivalent to NGINX Plus's `auth_jwt`) |
 | — | `auth_oidc_bearer_audience` | Original extension (equivalent to NGINX Plus's `auth_jwt`) |
+| — | `auth_oidc_bearer_typ` | Original extension (equivalent to NGINX Plus's `auth_jwt`) |
 
 ## Related Documents
 

@@ -119,7 +119,7 @@ Normally `auth_oidc_mode off` is sufficient, but use `auth_oidc off` when you wa
 
 ### auth_oidc_bearer
 
-```
+```text
 Syntax:  auth_oidc_bearer on | off;
 Default: off
 Context: http, server, location
@@ -151,7 +151,7 @@ location /api {
 
 ### auth_oidc_bearer_audience
 
-```
+```text
 Syntax:  auth_oidc_bearer_audience <value>;
 Default: — (falls back to the provider's client_id if unset)
 Context: http, server, location
@@ -174,7 +174,7 @@ location /api {
 
 ### auth_oidc_bearer_typ
 
-```
+```text
 Syntax:  auth_oidc_bearer_typ <value>;
 Default: — (typ is not verified if unset)
 Context: http, server, location
@@ -183,6 +183,8 @@ Context: http, server, location
 Specifies the value required in the JWT header `typ` when verifying access tokens with `auth_oidc_bearer on`. For RFC 9068-compliant providers, specify `"at+jwt"`. If unset, `typ` is not verified (comparison is case-sensitive and does not accept an `application/` prefix).
 
 A complex value (a string containing variables) can be specified.
+
+**Warning**: If left unset, an ID token is rejected only based on the presence of a `nonce` claim. Under the OIDC spec, a `nonce` claim is required in an ID token only when the authorization request included a `nonce`, so an ID token without a `nonce` (issued to a client that does not send `nonce`) can pass this path as long as its signature, issuer, audience, and expiration are valid. If the provider issues RFC 9068 `typ: at+jwt` access tokens, set this directive to prevent confusion with access tokens.
 
 **Usage example**:
 ```nginx
