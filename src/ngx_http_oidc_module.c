@@ -21,6 +21,7 @@
 #include "ngx_oidc_handler_logout.h"
 #include "ngx_oidc_handler_status.h"
 #include "ngx_oidc_handler_bearer.h"
+#include "nxe_phase.h"
 
 /* Helper macro for nested struct offsetof */
 #define ngx_offsetof_nested(type, field1, field2) \
@@ -2093,19 +2094,15 @@ ngx_http_oidc_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
 static ngx_int_t
 ngx_http_oidc_init(ngx_conf_t *cf)
 {
-    ngx_http_handler_pt *h;
-    ngx_http_core_main_conf_t *cmcf;
     ngx_http_variable_t *var, *oidc_var;
     ngx_shm_zone_t *shm_zone;
 
-    cmcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_core_module);
-
-    h = ngx_array_push(&cmcf->phases[NGX_HTTP_ACCESS_PHASE].handlers);
-    if (h == NULL) {
+    if (nxe_phase_add_handler(cf, NGX_HTTP_ACCESS_PHASE, NXE_PHASE_PRIO_OIDC,
+                               ngx_http_oidc_access_handler, "oidc")
+        != NGX_OK)
+    {
         return NGX_ERROR;
     }
-
-    *h = ngx_http_oidc_access_handler;
 
     /* Create shared memory zone for metadata cache */
     shm_zone = ngx_shared_memory_add(
