@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - `auth_oidc_bearer` / `auth_oidc_bearer_audience` directives: verify externally obtained access tokens (JWT format) presented via an `Authorization: Bearer <jwt>` header, using an OIDC provider's issuer and JWKS. Supports authenticating clients without a cookie session, such as API clients, SPAs, and mobile apps. The issuer is always verified against the provider's issuer; the audience is set via `auth_oidc_bearer_audience` (falls back to `client_id` if unset). Verification failures return a 401 with an RFC 6750 `WWW-Authenticate: Bearer error="..."` header
 
+### Changed
+
+- ACCESS-phase handler registration now goes through the shared `nxe-phase` submodule with an explicit priority (`NXE_PHASE_PRIO_OIDC = 500`, between webauthn at 450 and gate at 600) instead of depending on `load_module`/`--add-module` order. When multiple `nxe-phase`-registered auth modules are loaded together, the OIDC handler's evaluation order relative to them is now determined by priority rather than by module load order. This guarantee does not extend to ACCESS-phase handlers that register themselves without going through `nxe-phase`; their relative order still depends on module load order
+
 ## [0.6.0] - 2026-08-04
 
 ### Added
