@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - ACCESS-phase handler registration now goes through the shared `nxe-phase` submodule with an explicit priority (`NXE_PHASE_PRIO_OIDC = 500`, between webauthn at 450 and gate at 600) instead of depending on `load_module`/`--add-module` order. When multiple `nxe-phase`-registered auth modules are loaded together, the OIDC handler's evaluation order relative to them is now determined by priority rather than by module load order. This guarantee does not extend to ACCESS-phase handlers that register themselves without going through `nxe-phase`; their relative order still depends on module load order
 
+### Dependencies
+
+- Bump `nxe-jwx` `0.2.0` → `0.3.0`: add RFC 7638 JWK thumbprints and `nxe_jwx_jwks_verify_raw()` for detached signature verification, add `nxe_jwx_encode()` for signed JWT issuing, enforce decode size limits on `nxe_jwx_encode()` output
+
 ## [0.6.0] - 2026-08-04
 
 ### Added
