@@ -5,6 +5,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-03
+
 ### Added
 
 - `auth_oidc_bearer` / `auth_oidc_bearer_audience` directives: verify externally obtained access tokens (JWT format) presented via an `Authorization: Bearer <jwt>` header, using an OIDC provider's issuer and JWKS. Supports authenticating clients without a cookie session, such as API clients, SPAs, and mobile apps. The issuer is always verified against the provider's issuer; the audience is set via `auth_oidc_bearer_audience` (falls back to `client_id` if unset). Verification failures return a 401 with an RFC 6750 `WWW-Authenticate: Bearer error="..."` header
