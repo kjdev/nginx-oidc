@@ -169,7 +169,7 @@ HttpOnly and SameSite are always set automatically, so no additional configurati
 
 **Cookie name configuration when using multiple providers**:
 
-When using multiple OIDC providers, set a different `cookie_name` for each provider. Using the same cookie name will cause session conflicts and prevent proper operation.
+When using multiple OIDC providers, it is recommended to configure a different `cookie_name` for each provider. Session store keys are namespaced by a provider-identifying element, so sharing a `cookie_name` does not cause session impersonation or collisions. However, if multiple providers share the same cookie name, the browser overwrites the cookie value set by one provider with the value set by another, so you cannot stay logged in to more than one provider at the same time.
 
 ```nginx
 oidc_provider google {

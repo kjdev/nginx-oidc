@@ -279,7 +279,7 @@ http {
 
 A configuration supporting both Google and Azure AD. See [Minimal Configuration](#minimal-configuration) for notes about the default values of the session store `ttl` and the provider `session_timeout`.
 
-**Warning**: When running multiple providers on the same server, configure a different `cookie_name` for each provider. Using the same cookie name will cause session conflicts and prevent normal operation.
+**Note**: When running multiple providers on the same server, it is recommended to configure a different `cookie_name` for each provider. Session store keys are namespaced by a provider-identifying element, so sharing a `cookie_name` does not cause session impersonation or collisions. However, if multiple providers share the same cookie name, the browser overwrites the cookie value set by one provider with the value set by another, so you cannot stay logged in to more than one provider at the same time.
 
 **Note**: Callback URIs (e.g., `/auth/google/callback`) do not need to be explicitly matched to a location with `auth_oidc` enabled. The OIDC module automatically detects and processes callbacks based on the callback cookie and request URI. However, note that all OIDC processing including callback detection is disabled in locations where `auth_oidc off;` is explicitly set, so ensure that callback URIs do not match such locations.
 
