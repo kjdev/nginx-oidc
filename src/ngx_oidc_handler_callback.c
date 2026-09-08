@@ -170,7 +170,7 @@ callback_token_done(ngx_http_request_t *r, void *data, ngx_int_t rc)
         return NGX_ERROR;
     }
     expires = now + provider->session_timeout;
-    if (ngx_oidc_session_set_access_token(main_r, provider->session_store,
+    if (ngx_oidc_session_set_access_token(main_r, provider,
                                           session_id, &access_token,
                                           expires)
         != NGX_OK)
@@ -198,7 +198,7 @@ callback_token_done(ngx_http_request_t *r, void *data, ngx_int_t rc)
 
     if (id_token.len > 0) {
         /* Store id_token using Token Session Service API */
-        if (ngx_oidc_session_set_id_token(main_r, provider->session_store,
+        if (ngx_oidc_session_set_id_token(main_r, provider,
                                           session_id, &id_token,
                                           expires)
             != NGX_OK)
@@ -375,12 +375,12 @@ callback_exchange_code(ngx_http_request_t *r,
     if (provider->pkce.enable) {
         /* Retrieve code_verifier from session */
         if (ngx_oidc_session_get_verifier(
-                r, provider->session_store,
+                r, provider,
                 session_id, &code_verifier_val) == NGX_OK)
         {
             /* Remove code_verifier from session (one-time use) */
             ngx_oidc_session_delete_verifier(
-                r, provider->session_store, session_id);
+                r, provider, session_id);
         } else {
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                           "oidc_handler_callback: PKCE enabled "
@@ -553,7 +553,7 @@ callback_extract_and_validate_nonce(ngx_http_request_t *r,
     }
 
     /* Load stored nonce from session */
-    if (ngx_oidc_session_get_nonce(r, provider->session_store, session_id,
+    if (ngx_oidc_session_get_nonce(r, provider, session_id,
                                    &stored_nonce)
         != NGX_OK)
     {
@@ -600,7 +600,7 @@ callback_extract_and_validate_nonce(ngx_http_request_t *r,
     ngx_memcpy(expected_nonce->data, nonce_value.data, nonce_value.len);
 
     /* Delete nonce (one-time use) */
-    ngx_oidc_session_delete_nonce(r, provider->session_store, session_id);
+    ngx_oidc_session_delete_nonce(r, provider, session_id);
 
     return expected_nonce;
 }
@@ -667,7 +667,7 @@ callback_verify_id_token(ngx_http_request_t *r,
     }
 
     /* Get id_token using Token Session Service */
-    rc = ngx_oidc_session_get_id_token(r, provider->session_store, session_id,
+    rc = ngx_oidc_session_get_id_token(r, provider, session_id,
                                        &id_token);
     if (rc != NGX_OK) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
@@ -677,7 +677,7 @@ callback_verify_id_token(ngx_http_request_t *r,
     }
 
     /* Get access_token using Token Session Service (for at_hash validation) */
-    rc = ngx_oidc_session_get_access_token(r, provider->session_store,
+    rc = ngx_oidc_session_get_access_token(r, provider,
                                            session_id, &access_token);
     if (rc != NGX_OK) {
         ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
@@ -772,7 +772,7 @@ callback_verify_access_token(ngx_http_request_t *r,
     }
 
     /* Get access_token from Session Store using Token Session Service API */
-    if (ngx_oidc_session_get_access_token(r, provider->session_store,
+    if (ngx_oidc_session_get_access_token(r, provider,
                                           session_id, &access_token_value)
         != NGX_OK)
     {
@@ -789,7 +789,7 @@ callback_verify_access_token(ngx_http_request_t *r,
     }
 
     /* Retrieve id_token using Token Session Service API */
-    if (ngx_oidc_session_get_id_token(r, provider->session_store, session_id,
+    if (ngx_oidc_session_get_id_token(r, provider, session_id,
                                       &id_token_value)
         != NGX_OK)
     {
@@ -879,7 +879,7 @@ callback_redirect(ngx_http_request_t *r, ngx_http_oidc_provider_t *provider,
 
     /* Try to get original URI using Authorization Session Service */
     ngx_memzero(&original_uri, sizeof(ngx_str_t));
-    rc = ngx_oidc_session_get_orig_uri(r, provider->session_store,
+    rc = ngx_oidc_session_get_orig_uri(r, provider,
                                        session_id, &original_uri);
     if (rc != NGX_OK || original_uri.len == 0) {
         ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
@@ -894,7 +894,7 @@ callback_redirect(ngx_http_request_t *r, ngx_http_oidc_provider_t *provider,
         redirect_uri = original_uri;
 
         /* Clean up the original URI using Authorization Session Service */
-        ngx_oidc_session_delete_orig_uri(r, provider->session_store,
+        ngx_oidc_session_delete_orig_uri(r, provider,
                                          session_id);
     }
 
@@ -1136,7 +1136,7 @@ callback_userinfo_done(ngx_http_request_t *r, void *data, ngx_int_t rc)
 
         /* Get ID token and extract sub claim for comparison */
         ngx_str_t id_token_str;
-        if (ngx_oidc_session_get_id_token(main_r, provider->session_store,
+        if (ngx_oidc_session_get_id_token(main_r, provider,
                                           ctx->session_id, &id_token_str)
             != NGX_OK)
         {
@@ -1255,7 +1255,7 @@ callback_userinfo_done(ngx_http_request_t *r, void *data, ngx_int_t rc)
         return NGX_ERROR;
     }
     expires = now + provider->session_timeout;
-    if (ngx_oidc_session_set_userinfo(main_r, provider->session_store,
+    if (ngx_oidc_session_set_userinfo(main_r, provider,
                                       ctx->session_id, compact_body,
                                       expires)
         != NGX_OK)
@@ -1332,7 +1332,7 @@ callback_fetch_userinfo(ngx_http_request_t *r,
     }
 
     /* Get access_token using Token Session Service */
-    rc = ngx_oidc_session_get_access_token(r, provider->session_store,
+    rc = ngx_oidc_session_get_access_token(r, provider,
                                            session_id, &access_token);
     if (rc != NGX_OK) {
         ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
@@ -1396,7 +1396,7 @@ callback_fetch_userinfo_location(ngx_http_request_t *r,
     ngx_int_t rc;
 
     /* Get access_token from session store */
-    rc = ngx_oidc_session_get_access_token(r, provider->session_store,
+    rc = ngx_oidc_session_get_access_token(r, provider,
                                            session_id, &access_token);
     if (rc != NGX_OK) {
         ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
@@ -1464,7 +1464,7 @@ callback_fetch_userinfo_location(ngx_http_request_t *r,
                            sizeof("x-oidc-access-token") - 1);
 
     /* Add X-OIDC-Id-Token header if available */
-    rc = ngx_oidc_session_get_id_token(r, provider->session_store,
+    rc = ngx_oidc_session_get_id_token(r, provider,
                                        session_id, &id_token);
     if (rc == NGX_OK && id_token.len > 0) {
         h = ngx_list_push(&sr->headers_in.headers);
@@ -1564,7 +1564,7 @@ callback_phase_complete(ngx_http_request_t *r, ngx_http_oidc_ctx_t *ctx,
         if (old_session_id->len > 0) {
             expires = ngx_time() + provider->session_timeout;
 
-            rc = ngx_oidc_session_rotate(r, provider->session_store,
+            rc = ngx_oidc_session_rotate(r, provider,
                                          old_session_id, new_session_id,
                                          expires);
             if (rc != NGX_OK) {
@@ -1942,7 +1942,7 @@ callback_phase_exchange(ngx_http_request_t *r, ngx_http_oidc_ctx_t *ctx,
             /* Validate state against stored value */
             ngx_str_t stored_state;
             ngx_int_t store_result = ngx_oidc_session_get_state(
-                r, provider->session_store, session_id, &stored_state);
+                r, provider, session_id, &stored_state);
 
             /* Validate state parameter using constant-time comparison */
             ngx_int_t state_valid = NGX_ERROR;
@@ -1956,7 +1956,7 @@ callback_phase_exchange(ngx_http_request_t *r, ngx_http_oidc_ctx_t *ctx,
             if (state_valid != NGX_OK) {
                 /* Check for re-access (token already exists) */
                 ngx_str_t stored_token;
-                rc = ngx_oidc_session_get_id_token(r, provider->session_store,
+                rc = ngx_oidc_session_get_id_token(r, provider,
                                                    session_id, &stored_token);
                 if (rc == NGX_OK && stored_token.len > 0) {
                     /* Already authenticated
@@ -1983,12 +1983,12 @@ callback_phase_exchange(ngx_http_request_t *r, ngx_http_oidc_ctx_t *ctx,
                            "state validation successful");
 
             /* Remove state from shared memory (one-time use) */
-            ngx_oidc_session_delete_state(r, provider->session_store,
+            ngx_oidc_session_delete_state(r, provider,
                                           session_id);
         }
 
         /* Atomically check and mark authorization code as used (race-safe) */
-        rc = ngx_oidc_session_try_mark_code_used(r, provider->session_store,
+        rc = ngx_oidc_session_try_mark_code_used(r, provider,
                                                  &code);
         if (rc == NGX_DECLINED) {
             /* Code already used - reject (potential replay attack) */

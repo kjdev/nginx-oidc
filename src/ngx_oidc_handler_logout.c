@@ -15,10 +15,10 @@
 /* Internal helper to clear session tokens */
 static void
 logout_clear_session_tokens(ngx_http_request_t *r,
-    ngx_oidc_session_store_t *session_store, ngx_str_t *session_id)
+    ngx_http_oidc_provider_t *provider, ngx_str_t *session_id)
 {
     /* Use Management Service API to invalidate all session data */
-    ngx_oidc_session_invalidate(r, session_store, session_id);
+    ngx_oidc_session_invalidate(r, provider, session_id);
 
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                    "oidc_handler_logout: cleared all session data "
@@ -75,7 +75,7 @@ ngx_oidc_handler_logout(ngx_http_request_t *r,
         /* Get ID token from session store if logout_token_hint is enabled */
         if (provider->logout.token_hint) {
             /* Retrieve id_token using Token Session Service */
-            rc = ngx_oidc_session_get_id_token(r, provider->session_store,
+            rc = ngx_oidc_session_get_id_token(r, provider,
                                                session_id, &id_token);
             if (rc != NGX_OK) {
                 ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
@@ -86,7 +86,7 @@ ngx_oidc_handler_logout(ngx_http_request_t *r,
         }
 
         /* Clear session tokens from session store */
-        logout_clear_session_tokens(r, provider->session_store, session_id);
+        logout_clear_session_tokens(r, provider, session_id);
         ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                        "oidc_handler_logout: cleared session tokens "
                        "for session: %V",

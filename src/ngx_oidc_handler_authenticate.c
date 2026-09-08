@@ -446,7 +446,7 @@ ngx_oidc_handler_authenticate(ngx_http_request_t *r,
     original_uri.len = p - original_uri.data;
 
     /* Store the original URI in session store */
-    if (ngx_oidc_session_set_orig_uri(r, provider->session_store, session_id,
+    if (ngx_oidc_session_set_orig_uri(r, provider, session_id,
                                       &original_uri,
                                       ngx_time() + provider->pre_auth_timeout)
         != NGX_OK)
@@ -485,7 +485,7 @@ ngx_oidc_handler_authenticate(ngx_http_request_t *r,
 
     /* Store state, nonce, and code_verifier in session store */
     time_t expires = ngx_time() + provider->pre_auth_timeout;
-    if (ngx_oidc_session_set_state(r, provider->session_store, session_id,
+    if (ngx_oidc_session_set_state(r, provider, session_id,
                                    &state, expires)
         != NGX_OK)
     {
@@ -498,7 +498,7 @@ ngx_oidc_handler_authenticate(ngx_http_request_t *r,
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
-    if (ngx_oidc_session_set_nonce(r, provider->session_store, session_id,
+    if (ngx_oidc_session_set_nonce(r, provider, session_id,
                                    &nonce, expires)
         != NGX_OK)
     {
@@ -513,7 +513,7 @@ ngx_oidc_handler_authenticate(ngx_http_request_t *r,
 
     if (provider->pkce.enable) {
         /* Store the actual code_verifier value */
-        if (ngx_oidc_session_set_verifier(r, provider->session_store,
+        if (ngx_oidc_session_set_verifier(r, provider,
                                           session_id, &code_verifier,
                                           expires)
             != NGX_OK)

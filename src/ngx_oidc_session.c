@@ -13,18 +13,24 @@
 #include "ngx_oidc_http.h"
 
 /**
- * Format session store key from session ID and suffix
+ * Format session store key from provider name, session ID and suffix
  *
- * Builds a key string in the format "{session_id}:{suffix}".
+ * Builds a key string in the format "{provider_name}:{session_id}:{suffix}".
+ * The provider name binds the key to the provider performing the lookup,
+ * so a session_id copied from one provider's cookie into another provider's
+ * cookie name cannot resolve to that other provider's stored data even when
+ * both providers share one oidc_session_store (GHSA-598x-mpff-56vc).
  *
- * @param[in] r           HTTP request context
- * @param[in] session_id  Session identifier
- * @param[in] suffix      Key suffix (e.g., "state", "nonce")
+ * @param[in] r            HTTP request context
+ * @param[in] provider_name  Name of the provider that owns this key
+ * @param[in] session_id   Session identifier
+ * @param[in] suffix       Key suffix (e.g., "state", "nonce")
  *
  * @return Formatted key string (allocated from r->pool), or NULL on failure
  */
 static ngx_str_t *
-format_key(ngx_http_request_t *r, ngx_str_t *session_id, const char *suffix)
+format_key(ngx_http_request_t *r, ngx_str_t *provider_name,
+    ngx_str_t *session_id, const char *suffix)
 {
     ngx_str_t *key;
     u_char *p;
@@ -37,22 +43,28 @@ format_key(ngx_http_request_t *r, ngx_str_t *session_id, const char *suffix)
         return NULL;
     }
 
-    /* Check for size overflow (1 for ':' separator) */
-    if (session_id->len > NGX_MAX_SIZE_T_VALUE - 1 - suffix_len) {
+    /* Check for size overflow (2 for the two ':' separators) */
+    if (provider_name->len > NGX_MAX_SIZE_T_VALUE - 2 - suffix_len
+        || session_id->len
+        > NGX_MAX_SIZE_T_VALUE - 2 - suffix_len - provider_name->len)
+    {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_session: key length overflow "
-                      "(session_len=%uz, suffix_len=%uz)",
-                      session_id->len, suffix_len);
+                      "(provider_len=%uz, session_len=%uz, suffix_len=%uz)",
+                      provider_name->len, session_id->len, suffix_len);
         return NULL;
     }
 
-    key->len = session_id->len + sizeof(":") - 1 + suffix_len;
+    key->len = provider_name->len + sizeof(":") - 1 + session_id->len
+               + sizeof(":") - 1 + suffix_len;
     key->data = ngx_pnalloc(r->pool, key->len);
     if (key->data == NULL) {
         return NULL;
     }
 
-    p = ngx_cpymem(key->data, session_id->data, session_id->len);
+    p = ngx_cpymem(key->data, provider_name->data, provider_name->len);
+    *p++ = ':';
+    p = ngx_cpymem(p, session_id->data, session_id->len);
     *p++ = ':';
     ngx_memcpy(p, suffix, suffix_len);
 
@@ -185,19 +197,23 @@ build_cookie_domain_attr(ngx_http_request_t *r,
 }
 
 ngx_int_t
-ngx_oidc_session_set(ngx_http_request_t *r, ngx_oidc_session_store_t *store,
-    ngx_str_t *session_id, const char *key_name, ngx_str_t *value,
-    time_t expires)
+ngx_oidc_session_set(ngx_http_request_t *r,
+    ngx_http_oidc_provider_t *provider, ngx_str_t *session_id,
+    const char *key_name, ngx_str_t *value, time_t expires)
 {
     ngx_str_t *key;
+    ngx_oidc_session_store_t *store;
 
-    if (store == NULL || store->ops == NULL) {
+    if (provider == NULL || provider->session_store == NULL
+        || provider->session_store->ops == NULL)
+    {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_session: session store not initialized");
         return NGX_ERROR;
     }
+    store = provider->session_store;
 
-    key = format_key(r, session_id, key_name);
+    key = format_key(r, &provider->name, session_id, key_name);
     if (key == NULL) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_session: failed to build session key for %s",
@@ -209,18 +225,23 @@ ngx_oidc_session_set(ngx_http_request_t *r, ngx_oidc_session_store_t *store,
 }
 
 ngx_int_t
-ngx_oidc_session_get(ngx_http_request_t *r, ngx_oidc_session_store_t *store,
-    ngx_str_t *session_id, const char *key_name, ngx_str_t *value)
+ngx_oidc_session_get(ngx_http_request_t *r,
+    ngx_http_oidc_provider_t *provider, ngx_str_t *session_id,
+    const char *key_name, ngx_str_t *value)
 {
     ngx_str_t *key;
+    ngx_oidc_session_store_t *store;
 
-    if (store == NULL || store->ops == NULL) {
+    if (provider == NULL || provider->session_store == NULL
+        || provider->session_store->ops == NULL)
+    {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_session: session store not initialized");
         return NGX_ERROR;
     }
+    store = provider->session_store;
 
-    key = format_key(r, session_id, key_name);
+    key = format_key(r, &provider->name, session_id, key_name);
     if (key == NULL) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_session: failed to build session key for %s",
@@ -232,18 +253,23 @@ ngx_oidc_session_get(ngx_http_request_t *r, ngx_oidc_session_store_t *store,
 }
 
 ngx_int_t
-ngx_oidc_session_delete(ngx_http_request_t *r, ngx_oidc_session_store_t *store,
-    ngx_str_t *session_id, const char *key_name)
+ngx_oidc_session_delete(ngx_http_request_t *r,
+    ngx_http_oidc_provider_t *provider, ngx_str_t *session_id,
+    const char *key_name)
 {
     ngx_str_t *key;
+    ngx_oidc_session_store_t *store;
 
-    if (store == NULL || store->ops == NULL) {
+    if (provider == NULL || provider->session_store == NULL
+        || provider->session_store->ops == NULL)
+    {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_session: session store not initialized");
         return NGX_ERROR;
     }
+    store = provider->session_store;
 
-    key = format_key(r, session_id, key_name);
+    key = format_key(r, &provider->name, session_id, key_name);
     if (key == NULL) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "oidc_session: failed to build session key for %s",
@@ -267,14 +293,15 @@ ngx_oidc_session_delete(ngx_http_request_t *r, ngx_oidc_session_store_t *store,
  * transactional operations for Redis store if stronger atomicity is required.
  */
 ngx_int_t
-ngx_oidc_session_rotate(ngx_http_request_t *r, ngx_oidc_session_store_t *store,
-    ngx_str_t *old_session_id, ngx_str_t *new_session_id, time_t expires)
+ngx_oidc_session_rotate(ngx_http_request_t *r,
+    ngx_http_oidc_provider_t *provider, ngx_str_t *old_session_id,
+    ngx_str_t *new_session_id, time_t expires)
 {
     ngx_str_t token_data;
     ngx_int_t rc;
 
     /* Validate input parameters */
-    if (r == NULL || store == NULL || old_session_id == NULL
+    if (r == NULL || provider == NULL || old_session_id == NULL
         || new_session_id == NULL)
     {
         if (r != NULL && r->connection != NULL) {
@@ -285,10 +312,10 @@ ngx_oidc_session_rotate(ngx_http_request_t *r, ngx_oidc_session_store_t *store,
     }
 
     /* Move ID Token */
-    rc = ngx_oidc_session_get(r, store, old_session_id,
+    rc = ngx_oidc_session_get(r, provider, old_session_id,
                               NGX_OIDC_SESSION_KEY_ID_TOKEN, &token_data);
     if (rc == NGX_OK) {
-        rc = ngx_oidc_session_set(r, store, new_session_id,
+        rc = ngx_oidc_session_set(r, provider, new_session_id,
                                   NGX_OIDC_SESSION_KEY_ID_TOKEN,
                                   &token_data, expires);
         if (rc != NGX_OK) {
@@ -300,11 +327,11 @@ ngx_oidc_session_rotate(ngx_http_request_t *r, ngx_oidc_session_store_t *store,
     }
 
     /* Move Access Token */
-    rc = ngx_oidc_session_get(r, store, old_session_id,
+    rc = ngx_oidc_session_get(r, provider, old_session_id,
                               NGX_OIDC_SESSION_KEY_ACCESS_TOKEN,
                               &token_data);
     if (rc == NGX_OK) {
-        rc = ngx_oidc_session_set(r, store, new_session_id,
+        rc = ngx_oidc_session_set(r, provider, new_session_id,
                                   NGX_OIDC_SESSION_KEY_ACCESS_TOKEN,
                                   &token_data, expires);
         if (rc != NGX_OK) {
@@ -316,11 +343,11 @@ ngx_oidc_session_rotate(ngx_http_request_t *r, ngx_oidc_session_store_t *store,
     }
 
     /* Move Refresh Token (if exists) */
-    rc = ngx_oidc_session_get(r, store, old_session_id,
+    rc = ngx_oidc_session_get(r, provider, old_session_id,
                               NGX_OIDC_SESSION_KEY_REFRESH_TOKEN,
                               &token_data);
     if (rc == NGX_OK) {
-        rc = ngx_oidc_session_set(r, store, new_session_id,
+        rc = ngx_oidc_session_set(r, provider, new_session_id,
                                   NGX_OIDC_SESSION_KEY_REFRESH_TOKEN,
                                   &token_data, expires);
         if (rc != NGX_OK) {
@@ -332,10 +359,10 @@ ngx_oidc_session_rotate(ngx_http_request_t *r, ngx_oidc_session_store_t *store,
     }
 
     /* Move UserInfo (if exists) */
-    rc = ngx_oidc_session_get(r, store, old_session_id,
+    rc = ngx_oidc_session_get(r, provider, old_session_id,
                               NGX_OIDC_SESSION_KEY_USERINFO, &token_data);
     if (rc == NGX_OK) {
-        rc = ngx_oidc_session_set(r, store, new_session_id,
+        rc = ngx_oidc_session_set(r, provider, new_session_id,
                                   NGX_OIDC_SESSION_KEY_USERINFO,
                                   &token_data, expires);
         if (rc != NGX_OK) {
@@ -351,10 +378,10 @@ ngx_oidc_session_rotate(ngx_http_request_t *r, ngx_oidc_session_store_t *store,
     }
 
     /* Move Original URI (needed for post-auth redirect) */
-    rc = ngx_oidc_session_get(r, store, old_session_id,
+    rc = ngx_oidc_session_get(r, provider, old_session_id,
                               NGX_OIDC_SESSION_KEY_ORIGINAL_URI, &token_data);
     if (rc == NGX_OK && token_data.len > 0) {
-        rc = ngx_oidc_session_set(r, store, new_session_id,
+        rc = ngx_oidc_session_set(r, provider, new_session_id,
                                   NGX_OIDC_SESSION_KEY_ORIGINAL_URI,
                                   &token_data, expires);
         if (rc != NGX_OK) {
@@ -365,23 +392,23 @@ ngx_oidc_session_rotate(ngx_http_request_t *r, ngx_oidc_session_store_t *store,
     }
 
     /* Delete old session data */
-    ngx_oidc_session_delete(r, store, old_session_id,
+    ngx_oidc_session_delete(r, provider, old_session_id,
                             NGX_OIDC_SESSION_KEY_ID_TOKEN);
-    ngx_oidc_session_delete(r, store, old_session_id,
+    ngx_oidc_session_delete(r, provider, old_session_id,
                             NGX_OIDC_SESSION_KEY_ACCESS_TOKEN);
-    ngx_oidc_session_delete(r, store, old_session_id,
+    ngx_oidc_session_delete(r, provider, old_session_id,
                             NGX_OIDC_SESSION_KEY_REFRESH_TOKEN);
-    ngx_oidc_session_delete(r, store, old_session_id,
+    ngx_oidc_session_delete(r, provider, old_session_id,
                             NGX_OIDC_SESSION_KEY_USERINFO);
 
     /* Also clear Pre-Auth session data (if any) */
-    ngx_oidc_session_delete(r, store, old_session_id,
+    ngx_oidc_session_delete(r, provider, old_session_id,
                             NGX_OIDC_SESSION_KEY_STATE);
-    ngx_oidc_session_delete(r, store, old_session_id,
+    ngx_oidc_session_delete(r, provider, old_session_id,
                             NGX_OIDC_SESSION_KEY_NONCE);
-    ngx_oidc_session_delete(r, store, old_session_id,
+    ngx_oidc_session_delete(r, provider, old_session_id,
                             NGX_OIDC_SESSION_KEY_CODE_VERIFIER);
-    ngx_oidc_session_delete(r, store, old_session_id,
+    ngx_oidc_session_delete(r, provider, old_session_id,
                             NGX_OIDC_SESSION_KEY_ORIGINAL_URI);
 
     ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
@@ -393,33 +420,33 @@ ngx_oidc_session_rotate(ngx_http_request_t *r, ngx_oidc_session_store_t *store,
 
 ngx_int_t
 ngx_oidc_session_invalidate(ngx_http_request_t *r,
-    ngx_oidc_session_store_t *store, ngx_str_t *session_id)
+    ngx_http_oidc_provider_t *provider, ngx_str_t *session_id)
 {
     /* Validate input parameters */
-    if (r == NULL || store == NULL || session_id == NULL) {
+    if (r == NULL || provider == NULL || session_id == NULL) {
         if (r != NULL && r->connection != NULL) {
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                           "oidc_session_invalidate: NULL parameter");
         }
         return NGX_ERROR;
     }
-    ngx_oidc_session_delete(r, store, session_id,
+    ngx_oidc_session_delete(r, provider, session_id,
                             NGX_OIDC_SESSION_KEY_ID_TOKEN);
-    ngx_oidc_session_delete(r, store, session_id,
+    ngx_oidc_session_delete(r, provider, session_id,
                             NGX_OIDC_SESSION_KEY_ACCESS_TOKEN);
-    ngx_oidc_session_delete(r, store, session_id,
+    ngx_oidc_session_delete(r, provider, session_id,
                             NGX_OIDC_SESSION_KEY_REFRESH_TOKEN);
-    ngx_oidc_session_delete(r, store, session_id,
+    ngx_oidc_session_delete(r, provider, session_id,
                             NGX_OIDC_SESSION_KEY_USERINFO);
 
     /* Delete Pre-Auth session data (if any) */
-    ngx_oidc_session_delete(r, store, session_id,
+    ngx_oidc_session_delete(r, provider, session_id,
                             NGX_OIDC_SESSION_KEY_STATE);
-    ngx_oidc_session_delete(r, store, session_id,
+    ngx_oidc_session_delete(r, provider, session_id,
                             NGX_OIDC_SESSION_KEY_NONCE);
-    ngx_oidc_session_delete(r, store, session_id,
+    ngx_oidc_session_delete(r, provider, session_id,
                             NGX_OIDC_SESSION_KEY_CODE_VERIFIER);
-    ngx_oidc_session_delete(r, store, session_id,
+    ngx_oidc_session_delete(r, provider, session_id,
                             NGX_OIDC_SESSION_KEY_ORIGINAL_URI);
 
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
@@ -973,26 +1000,35 @@ ngx_oidc_session_hash_code(ngx_http_request_t *r, ngx_str_t *code,
 
 ngx_int_t
 ngx_oidc_session_try_mark_code_used(ngx_http_request_t *r,
-    ngx_oidc_session_store_t *store, ngx_str_t *code)
+    ngx_http_oidc_provider_t *provider, ngx_str_t *code)
 {
     ngx_str_t hash, key, value;
     u_char *p;
     time_t exp;
     ngx_int_t rc;
 
+    if (provider == NULL || provider->session_store == NULL) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                      "oidc_session: session store not initialized");
+        return NGX_ERROR;
+    }
+
     /* Compute code hash */
     if (ngx_oidc_session_hash_code(r, code, &hash) != NGX_OK) {
         return NGX_ERROR;
     }
 
-    /* Build key: "used_code:<hash>" */
-    key.len = sizeof("used_code:") - 1 + hash.len;
+    /* Build key: "{provider_name}:used_code:<hash>"; the provider name
+     * prevents one provider's authorization code hash from colliding with
+     * another provider's when they share one oidc_session_store. */
+    key.len = provider->name.len + sizeof(":used_code:") - 1 + hash.len;
     key.data = ngx_pnalloc(r->pool, key.len);
     if (key.data == NULL) {
         return NGX_ERROR;
     }
 
-    p = ngx_cpymem(key.data, "used_code:", sizeof("used_code:") - 1);
+    p = ngx_cpymem(key.data, provider->name.data, provider->name.len);
+    p = ngx_cpymem(p, ":used_code:", sizeof(":used_code:") - 1);
     ngx_memcpy(p, hash.data, hash.len);
 
     /* Set value to "1" */
@@ -1002,7 +1038,8 @@ ngx_oidc_session_try_mark_code_used(ngx_http_request_t *r,
     exp = ngx_time() + NGX_OIDC_PRE_AUTH_TIMEOUT;
 
     /* Atomically try to mark code as used (set only if not exists) */
-    rc = ngx_oidc_session_store_set_nx(r, store, &key, &value, exp);
+    rc = ngx_oidc_session_store_set_nx(r, provider->session_store, &key,
+                                       &value, exp);
 
     if (rc == NGX_OK) {
         /* Code was not used before, successfully marked as used */
