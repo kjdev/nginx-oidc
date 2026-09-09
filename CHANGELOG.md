@@ -5,6 +5,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-10
+
 ### Security
 
 - Session store keys are now namespaced by a provider-identifying element (GHSA-598x-mpff-56vc, CWE-287). When multiple `oidc_provider` blocks shared one `oidc_session_store` (documented in `docs/EXAMPLES.md`, or implicitly when `session_store` is left unset), keys were built from `session_id` alone, so a session cookie legitimately established with one provider could be replayed under another provider's cookie name and be accepted without ever contacting that provider's authorization server. This key-format change invalidates all existing sessions on upgrade; every active user must re-authenticate on their next request
