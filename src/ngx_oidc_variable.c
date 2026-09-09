@@ -94,12 +94,12 @@ var_get_token(ngx_http_request_t *r, ngx_http_variable_value_t *v,
 
     switch (token_type) {
     case VAR_TOKEN_ID:
-        rc = ngx_oidc_session_get_id_token(r, provider->session_store,
+        rc = ngx_oidc_session_get_id_token(r, provider,
                                            session_id, &token_value);
         break;
 
     case VAR_TOKEN_ACCESS:
-        rc = ngx_oidc_session_get_access_token(r, provider->session_store,
+        rc = ngx_oidc_session_get_access_token(r, provider,
                                                session_id, &token_value);
         break;
 
@@ -191,7 +191,7 @@ var_claim_payload(ngx_http_request_t *r, ngx_http_oidc_provider_t *provider,
                        sid);
     } else {
         /* Not cached, decode and cache via nxe-jwx */
-        rc = ngx_oidc_session_get_id_token(r, provider->session_store,
+        rc = ngx_oidc_session_get_id_token(r, provider,
                                            sid, &token_value);
         if (rc != NGX_OK || token_value.len == 0) {
             return NULL;
@@ -307,7 +307,7 @@ ngx_oidc_variable_claim(ngx_http_request_t *r, ngx_http_variable_value_t *v,
          * for a Bearer-authenticated request, ADR 0002 D5) */
         ngx_str_t userinfo_data;
 
-        rc = ngx_oidc_session_get_userinfo(r, provider->session_store,
+        rc = ngx_oidc_session_get_userinfo(r, provider,
                                            session_id, &userinfo_data);
         if (rc == NGX_OK && userinfo_data.len > 0) {
             /* Parse UserInfo JSON (provider-originated; apply DoS limits
@@ -561,7 +561,7 @@ ngx_oidc_variable_authenticated(ngx_http_request_t *r,
     }
 
     /* Check if ID token exists in session */
-    rc = ngx_oidc_session_get_id_token(r, provider->session_store,
+    rc = ngx_oidc_session_get_id_token(r, provider,
                                        session_id, &token_value);
     if (rc == NGX_OK) {
         /* User is authenticated */
@@ -630,7 +630,7 @@ ngx_oidc_variable_userinfo(ngx_http_request_t *r, ngx_http_variable_value_t *v,
     }
 
     /* Get userinfo data using Service Layer API */
-    rc = ngx_oidc_session_get_userinfo(r, provider->session_store, session_id,
+    rc = ngx_oidc_session_get_userinfo(r, provider, session_id,
                                        &userinfo_data);
     if (rc != NGX_OK || userinfo_data.len == 0) {
         /* No userinfo data available */

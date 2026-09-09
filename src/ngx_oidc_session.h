@@ -24,7 +24,9 @@
  * Store a value in session
  *
  * @param[in] r           HTTP request context
- * @param[in] store       Session store
+ * @param[in] provider    OIDC provider configuration (identifies the
+ *                        session store and namespaces the key so that
+ *                        providers sharing one store cannot collide)
  * @param[in] session_id  Session identifier
  * @param[in] key_name    Key name for the value
  * @param[in] value       Value to store
@@ -33,14 +35,16 @@
  * @return NGX_OK on success, NGX_ERROR on failure
  */
 ngx_int_t ngx_oidc_session_set(ngx_http_request_t *r,
-    ngx_oidc_session_store_t *store, ngx_str_t *session_id,
+    ngx_http_oidc_provider_t *provider, ngx_str_t *session_id,
     const char *key_name, ngx_str_t *value, time_t expires);
 
 /**
  * Retrieve a value from session
  *
  * @param[in] r           HTTP request context
- * @param[in] store       Session store
+ * @param[in] provider    OIDC provider configuration (identifies the
+ *                        session store and namespaces the key so that
+ *                        providers sharing one store cannot collide)
  * @param[in] session_id  Session identifier
  * @param[in] key_name    Key name to retrieve
  * @param[out] value      Retrieved value
@@ -48,21 +52,23 @@ ngx_int_t ngx_oidc_session_set(ngx_http_request_t *r,
  * @return NGX_OK on success, NGX_DECLINED if not found, NGX_ERROR on failure
  */
 ngx_int_t ngx_oidc_session_get(ngx_http_request_t *r,
-    ngx_oidc_session_store_t *store, ngx_str_t *session_id,
+    ngx_http_oidc_provider_t *provider, ngx_str_t *session_id,
     const char *key_name, ngx_str_t *value);
 
 /**
  * Delete a value from session
  *
  * @param[in] r           HTTP request context
- * @param[in] store       Session store
+ * @param[in] provider    OIDC provider configuration (identifies the
+ *                        session store and namespaces the key so that
+ *                        providers sharing one store cannot collide)
  * @param[in] session_id  Session identifier
  * @param[in] key_name    Key name to delete
  *
  * @return NGX_OK on success, NGX_ERROR on failure
  */
 ngx_int_t ngx_oidc_session_delete(ngx_http_request_t *r,
-    ngx_oidc_session_store_t *store, ngx_str_t *session_id,
+    ngx_http_oidc_provider_t *provider, ngx_str_t *session_id,
     const char *key_name);
 
 /**
@@ -72,7 +78,9 @@ ngx_int_t ngx_oidc_session_delete(ngx_http_request_t *r,
  * and removes the old session.
  *
  * @param[in] r               HTTP request context
- * @param[in] store           Session store
+ * @param[in] provider        OIDC provider configuration (identifies the
+ *                            session store and namespaces the key so that
+ *                            providers sharing one store cannot collide)
  * @param[in] old_session_id  Current session identifier
  * @param[in] new_session_id  New session identifier
  * @param[in] expires         Expiration time for new session
@@ -80,7 +88,7 @@ ngx_int_t ngx_oidc_session_delete(ngx_http_request_t *r,
  * @return NGX_OK on success, NGX_ERROR on failure
  */
 ngx_int_t ngx_oidc_session_rotate(ngx_http_request_t *r,
-    ngx_oidc_session_store_t *store, ngx_str_t *old_session_id,
+    ngx_http_oidc_provider_t *provider, ngx_str_t *old_session_id,
     ngx_str_t *new_session_id, time_t expires);
 
 /**
@@ -89,13 +97,15 @@ ngx_int_t ngx_oidc_session_rotate(ngx_http_request_t *r,
  * Removes all data associated with the given session ID.
  *
  * @param[in] r           HTTP request context
- * @param[in] store       Session store
+ * @param[in] provider    OIDC provider configuration (identifies the
+ *                        session store and namespaces the key so that
+ *                        providers sharing one store cannot collide)
  * @param[in] session_id  Session identifier to invalidate
  *
  * @return NGX_OK on success, NGX_ERROR on failure
  */
 ngx_int_t ngx_oidc_session_invalidate(ngx_http_request_t *r,
-    ngx_oidc_session_store_t *store, ngx_str_t *session_id);
+    ngx_http_oidc_provider_t *provider, ngx_str_t *session_id);
 
 /**
  * Get temporary session ID from cookie
@@ -167,216 +177,224 @@ ngx_int_t ngx_oidc_session_clear_permanent_cookie(ngx_http_request_t *r,
 /* State operations */
 static inline ngx_int_t
 ngx_oidc_session_set_state(ngx_http_request_t *r,
-    ngx_oidc_session_store_t *store, ngx_str_t *sid, ngx_str_t *val, time_t exp)
+    ngx_http_oidc_provider_t *provider, ngx_str_t *sid, ngx_str_t *val,
+    time_t exp)
 {
-    return ngx_oidc_session_set(r, store, sid,
+    return ngx_oidc_session_set(r, provider, sid,
                                 NGX_OIDC_SESSION_KEY_STATE,
                                 val, exp);
 }
 
 static inline ngx_int_t
 ngx_oidc_session_get_state(ngx_http_request_t *r,
-    ngx_oidc_session_store_t *store, ngx_str_t *sid, ngx_str_t *val)
+    ngx_http_oidc_provider_t *provider, ngx_str_t *sid, ngx_str_t *val)
 {
-    return ngx_oidc_session_get(r, store, sid,
+    return ngx_oidc_session_get(r, provider, sid,
                                 NGX_OIDC_SESSION_KEY_STATE,
                                 val);
 }
 
 static inline ngx_int_t
 ngx_oidc_session_delete_state(ngx_http_request_t *r,
-    ngx_oidc_session_store_t *store, ngx_str_t *sid)
+    ngx_http_oidc_provider_t *provider, ngx_str_t *sid)
 {
-    return ngx_oidc_session_delete(r, store, sid,
+    return ngx_oidc_session_delete(r, provider, sid,
                                    NGX_OIDC_SESSION_KEY_STATE);
 }
 
 /* Nonce operations */
 static inline ngx_int_t
 ngx_oidc_session_set_nonce(ngx_http_request_t *r,
-    ngx_oidc_session_store_t *store, ngx_str_t *sid, ngx_str_t *val, time_t exp)
+    ngx_http_oidc_provider_t *provider, ngx_str_t *sid, ngx_str_t *val,
+    time_t exp)
 {
-    return ngx_oidc_session_set(r, store, sid,
+    return ngx_oidc_session_set(r, provider, sid,
                                 NGX_OIDC_SESSION_KEY_NONCE,
                                 val, exp);
 }
 
 static inline ngx_int_t
 ngx_oidc_session_get_nonce(ngx_http_request_t *r,
-    ngx_oidc_session_store_t *store, ngx_str_t *sid, ngx_str_t *val)
+    ngx_http_oidc_provider_t *provider, ngx_str_t *sid, ngx_str_t *val)
 {
-    return ngx_oidc_session_get(r, store, sid,
+    return ngx_oidc_session_get(r, provider, sid,
                                 NGX_OIDC_SESSION_KEY_NONCE,
                                 val);
 }
 
 static inline ngx_int_t
 ngx_oidc_session_delete_nonce(ngx_http_request_t *r,
-    ngx_oidc_session_store_t *store, ngx_str_t *sid)
+    ngx_http_oidc_provider_t *provider, ngx_str_t *sid)
 {
-    return ngx_oidc_session_delete(r, store, sid,
+    return ngx_oidc_session_delete(r, provider, sid,
                                    NGX_OIDC_SESSION_KEY_NONCE);
 }
 
 /* Code verifier operations */
 static inline ngx_int_t
 ngx_oidc_session_set_verifier(ngx_http_request_t *r,
-    ngx_oidc_session_store_t *store, ngx_str_t *sid, ngx_str_t *val, time_t exp)
+    ngx_http_oidc_provider_t *provider, ngx_str_t *sid, ngx_str_t *val,
+    time_t exp)
 {
-    return ngx_oidc_session_set(r, store, sid,
+    return ngx_oidc_session_set(r, provider, sid,
                                 NGX_OIDC_SESSION_KEY_CODE_VERIFIER,
                                 val, exp);
 }
 
 static inline ngx_int_t
 ngx_oidc_session_get_verifier(ngx_http_request_t *r,
-    ngx_oidc_session_store_t *store, ngx_str_t *sid, ngx_str_t *val)
+    ngx_http_oidc_provider_t *provider, ngx_str_t *sid, ngx_str_t *val)
 {
-    return ngx_oidc_session_get(r, store, sid,
+    return ngx_oidc_session_get(r, provider, sid,
                                 NGX_OIDC_SESSION_KEY_CODE_VERIFIER,
                                 val);
 }
 
 static inline ngx_int_t
 ngx_oidc_session_delete_verifier(ngx_http_request_t *r,
-    ngx_oidc_session_store_t *store, ngx_str_t *sid)
+    ngx_http_oidc_provider_t *provider, ngx_str_t *sid)
 {
-    return ngx_oidc_session_delete(r, store, sid,
+    return ngx_oidc_session_delete(r, provider, sid,
                                    NGX_OIDC_SESSION_KEY_CODE_VERIFIER);
 }
 
 /* Original URI operations */
 static inline ngx_int_t
 ngx_oidc_session_set_orig_uri(ngx_http_request_t *r,
-    ngx_oidc_session_store_t *store, ngx_str_t *sid, ngx_str_t *val, time_t exp)
+    ngx_http_oidc_provider_t *provider, ngx_str_t *sid, ngx_str_t *val,
+    time_t exp)
 {
-    return ngx_oidc_session_set(r, store, sid,
+    return ngx_oidc_session_set(r, provider, sid,
                                 NGX_OIDC_SESSION_KEY_ORIGINAL_URI,
                                 val, exp);
 }
 
 static inline ngx_int_t
 ngx_oidc_session_get_orig_uri(ngx_http_request_t *r,
-    ngx_oidc_session_store_t *store, ngx_str_t *sid, ngx_str_t *val)
+    ngx_http_oidc_provider_t *provider, ngx_str_t *sid, ngx_str_t *val)
 {
-    return ngx_oidc_session_get(r, store, sid,
+    return ngx_oidc_session_get(r, provider, sid,
                                 NGX_OIDC_SESSION_KEY_ORIGINAL_URI,
                                 val);
 }
 
 static inline ngx_int_t
 ngx_oidc_session_delete_orig_uri(ngx_http_request_t *r,
-    ngx_oidc_session_store_t *store, ngx_str_t *sid)
+    ngx_http_oidc_provider_t *provider, ngx_str_t *sid)
 {
-    return ngx_oidc_session_delete(r, store, sid,
+    return ngx_oidc_session_delete(r, provider, sid,
                                    NGX_OIDC_SESSION_KEY_ORIGINAL_URI);
 }
 
 /* ID token operations */
 static inline ngx_int_t
 ngx_oidc_session_set_id_token(ngx_http_request_t *r,
-    ngx_oidc_session_store_t *store, ngx_str_t *sid, ngx_str_t *val, time_t exp)
+    ngx_http_oidc_provider_t *provider, ngx_str_t *sid, ngx_str_t *val,
+    time_t exp)
 {
-    return ngx_oidc_session_set(r, store, sid,
+    return ngx_oidc_session_set(r, provider, sid,
                                 NGX_OIDC_SESSION_KEY_ID_TOKEN,
                                 val, exp);
 }
 
 static inline ngx_int_t
 ngx_oidc_session_get_id_token(ngx_http_request_t *r,
-    ngx_oidc_session_store_t *store, ngx_str_t *sid, ngx_str_t *val)
+    ngx_http_oidc_provider_t *provider, ngx_str_t *sid, ngx_str_t *val)
 {
-    return ngx_oidc_session_get(r, store, sid,
+    return ngx_oidc_session_get(r, provider, sid,
                                 NGX_OIDC_SESSION_KEY_ID_TOKEN,
                                 val);
 }
 
 static inline ngx_int_t
 ngx_oidc_session_delete_id_token(ngx_http_request_t *r,
-    ngx_oidc_session_store_t *store, ngx_str_t *sid)
+    ngx_http_oidc_provider_t *provider, ngx_str_t *sid)
 {
-    return ngx_oidc_session_delete(r, store, sid,
+    return ngx_oidc_session_delete(r, provider, sid,
                                    NGX_OIDC_SESSION_KEY_ID_TOKEN);
 }
 
 /* Access token operations */
 static inline ngx_int_t
 ngx_oidc_session_set_access_token(ngx_http_request_t *r,
-    ngx_oidc_session_store_t *store, ngx_str_t *sid, ngx_str_t *val, time_t exp)
+    ngx_http_oidc_provider_t *provider, ngx_str_t *sid, ngx_str_t *val,
+    time_t exp)
 {
-    return ngx_oidc_session_set(r, store, sid,
+    return ngx_oidc_session_set(r, provider, sid,
                                 NGX_OIDC_SESSION_KEY_ACCESS_TOKEN,
                                 val, exp);
 }
 
 static inline ngx_int_t
 ngx_oidc_session_get_access_token(ngx_http_request_t *r,
-    ngx_oidc_session_store_t *store, ngx_str_t *sid, ngx_str_t *val)
+    ngx_http_oidc_provider_t *provider, ngx_str_t *sid, ngx_str_t *val)
 {
-    return ngx_oidc_session_get(r, store, sid,
+    return ngx_oidc_session_get(r, provider, sid,
                                 NGX_OIDC_SESSION_KEY_ACCESS_TOKEN,
                                 val);
 }
 
 static inline ngx_int_t
 ngx_oidc_session_delete_access_token(ngx_http_request_t *r,
-    ngx_oidc_session_store_t *store, ngx_str_t *sid)
+    ngx_http_oidc_provider_t *provider, ngx_str_t *sid)
 {
-    return ngx_oidc_session_delete(r, store, sid,
+    return ngx_oidc_session_delete(r, provider, sid,
                                    NGX_OIDC_SESSION_KEY_ACCESS_TOKEN);
 }
 
 /* Refresh token operations */
 static inline ngx_int_t
 ngx_oidc_session_set_refresh_token(ngx_http_request_t *r,
-    ngx_oidc_session_store_t *store, ngx_str_t *sid, ngx_str_t *val, time_t exp)
+    ngx_http_oidc_provider_t *provider, ngx_str_t *sid, ngx_str_t *val,
+    time_t exp)
 {
-    return ngx_oidc_session_set(r, store, sid,
+    return ngx_oidc_session_set(r, provider, sid,
                                 NGX_OIDC_SESSION_KEY_REFRESH_TOKEN,
                                 val, exp);
 }
 
 static inline ngx_int_t
 ngx_oidc_session_get_refresh_token(ngx_http_request_t *r,
-    ngx_oidc_session_store_t *store, ngx_str_t *sid, ngx_str_t *val)
+    ngx_http_oidc_provider_t *provider, ngx_str_t *sid, ngx_str_t *val)
 {
-    return ngx_oidc_session_get(r, store, sid,
+    return ngx_oidc_session_get(r, provider, sid,
                                 NGX_OIDC_SESSION_KEY_REFRESH_TOKEN,
                                 val);
 }
 
 static inline ngx_int_t
 ngx_oidc_session_delete_refresh_token(ngx_http_request_t *r,
-    ngx_oidc_session_store_t *store, ngx_str_t *sid)
+    ngx_http_oidc_provider_t *provider, ngx_str_t *sid)
 {
-    return ngx_oidc_session_delete(r, store, sid,
+    return ngx_oidc_session_delete(r, provider, sid,
                                    NGX_OIDC_SESSION_KEY_REFRESH_TOKEN);
 }
 
 /* UserInfo operations */
 static inline ngx_int_t
 ngx_oidc_session_set_userinfo(ngx_http_request_t *r,
-    ngx_oidc_session_store_t *store, ngx_str_t *sid, ngx_str_t *val, time_t exp)
+    ngx_http_oidc_provider_t *provider, ngx_str_t *sid, ngx_str_t *val,
+    time_t exp)
 {
-    return ngx_oidc_session_set(r, store, sid,
+    return ngx_oidc_session_set(r, provider, sid,
                                 NGX_OIDC_SESSION_KEY_USERINFO,
                                 val, exp);
 }
 
 static inline ngx_int_t
 ngx_oidc_session_get_userinfo(ngx_http_request_t *r,
-    ngx_oidc_session_store_t *store, ngx_str_t *sid, ngx_str_t *val)
+    ngx_http_oidc_provider_t *provider, ngx_str_t *sid, ngx_str_t *val)
 {
-    return ngx_oidc_session_get(r, store, sid,
+    return ngx_oidc_session_get(r, provider, sid,
                                 NGX_OIDC_SESSION_KEY_USERINFO,
                                 val);
 }
 
 static inline ngx_int_t
 ngx_oidc_session_delete_userinfo(ngx_http_request_t *r,
-    ngx_oidc_session_store_t *store, ngx_str_t *sid)
+    ngx_http_oidc_provider_t *provider, ngx_str_t *sid)
 {
-    return ngx_oidc_session_delete(r, store, sid,
+    return ngx_oidc_session_delete(r, provider, sid,
                                    NGX_OIDC_SESSION_KEY_USERINFO);
 }
 
@@ -385,14 +403,16 @@ ngx_oidc_session_delete_userinfo(ngx_http_request_t *r,
  *
  * Combines check and mark operations to prevent race conditions.
  *
- * @param[in] r      HTTP request context
- * @param[in] store  Session store
- * @param[in] code   Authorization code
+ * @param[in] r         HTTP request context
+ * @param[in] provider  OIDC provider configuration (identifies the session
+ *                      store and namespaces the key so that providers
+ *                      sharing one store cannot collide)
+ * @param[in] code      Authorization code
  *
  * @return NGX_OK if marked successfully, NGX_DECLINED if already used,
  *         NGX_ERROR on failure
  */
 ngx_int_t ngx_oidc_session_try_mark_code_used(ngx_http_request_t *r,
-    ngx_oidc_session_store_t *store, ngx_str_t *code);
+    ngx_http_oidc_provider_t *provider, ngx_str_t *code);
 
 #endif /* _NGX_OIDC_SESSION_H_INCLUDED_ */

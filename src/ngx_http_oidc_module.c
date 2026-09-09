@@ -538,7 +538,7 @@ access_is_authenticated(ngx_http_request_t *r,
     }
 
     /* Load id_token from session store */
-    rc = ngx_oidc_session_get_id_token(r, provider->session_store, session_id,
+    rc = ngx_oidc_session_get_id_token(r, provider, session_id,
                                        &stored_id_token);
     if (rc == NGX_OK && stored_id_token.len > 0) {
         return NGX_OK;
@@ -1354,6 +1354,21 @@ static char *
 ngx_http_oidc_validate_provider(ngx_conf_t *cf,
     ngx_http_oidc_provider_t *provider)
 {
+    /* Session store keys and the temporary callback cookie both embed the
+     * provider name ahead of an unescaped ':' separator (format_key() in
+     * ngx_oidc_session.c, and the "provider:session_id" cookie value in
+     * ngx_oidc_session_set_temporary_cookie()). A ':' inside the name itself
+     * would let one provider's key/cookie be misparsed as another's,
+     * undermining the cross-provider isolation those separators exist for. */
+    if (ngx_strlchr(provider->name.data,
+                    provider->name.data + provider->name.len, ':') != NULL)
+    {
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                           "oidc provider \"%V\": name must not contain ':'",
+                           &provider->name);
+        return NGX_CONF_ERROR;
+    }
+
     /* Check required parameter: issuer */
     if (provider->issuer == NULL) {
         ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
@@ -1954,6 +1969,30 @@ ngx_http_oidc_init_main_conf(ngx_conf_t *cf, void *conf)
             }
         }
 
+        /* Check for duplicate provider names. The provider name namespaces
+         * session store keys (format_key() in ngx_oidc_session.c); two
+         * providers sharing a name would share a key namespace and lose the
+         * cross-provider isolation that namespacing exists to provide,
+         * regardless of their session_store or cookie_name settings. */
+        for (i = 0; i < omcf->providers->nelts; i++) {
+            ngx_uint_t j;
+
+            for (j = i + 1; j < omcf->providers->nelts; j++) {
+                if (provider[i].name.len == provider[j].name.len
+                    && ngx_strncmp(provider[i].name.data,
+                                   provider[j].name.data,
+                                   provider[i].name.len) == 0)
+                {
+                    ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                                       "duplicate oidc provider name \"%V\"; "
+                                       "each oidc_provider must have a "
+                                       "unique name",
+                                       &provider[i].name);
+                    return NGX_CONF_ERROR;
+                }
+            }
+        }
+
         /* Check for duplicate cookie names only for custom cookie names */
         for (i = 0; i < omcf->providers->nelts; i++) {
             ngx_str_t cookie_name_i, cookie_name_j;
@@ -2098,7 +2137,7 @@ ngx_http_oidc_init(ngx_conf_t *cf)
     ngx_shm_zone_t *shm_zone;
 
     if (nxe_phase_add_handler(cf, NGX_HTTP_ACCESS_PHASE, NXE_PHASE_PRIO_OIDC,
-                               ngx_http_oidc_access_handler, "oidc")
+                              ngx_http_oidc_access_handler, "oidc")
         != NGX_OK)
     {
         return NGX_ERROR;
