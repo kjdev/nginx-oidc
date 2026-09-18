@@ -1862,10 +1862,10 @@ callback_phase_exchange(ngx_http_request_t *r, ngx_http_oidc_ctx_t *ctx,
             return NGX_HTTP_UNAUTHORIZED;
         }
 
-        if (code.len > 1024) {
+        if (code.len > 2048) {
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                           "oidc_handler_callback: code parameter too long: "
-                          "%uz bytes (max: 1024)",
+                          "%uz bytes (max: 2048)",
                           code.len);
             return NGX_HTTP_UNAUTHORIZED;
         }
