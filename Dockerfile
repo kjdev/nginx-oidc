@@ -101,8 +101,8 @@ location /_oidc_http_fetch {
 }
 EOS
 
-# [google] Example
-FROM module AS google
+# [Example]
+FROM module AS example
 
 COPY --chmod=644 <<'EOS' /etc/nginx/templates/default.conf.template
 upstream app {
@@ -125,23 +125,23 @@ oidc_session_store memory_store {
     ttl 3600;
 }
 
-oidc_provider google {
-    issuer "https://accounts.google.com";
-    client_id "${NGINX_GOOGLE_CLIENT_ID}";
-    client_secret "${NGINX_GOOGLE_CLIENT_SECRET}";
+oidc_provider idp {
+    issuer "${NGINX_IDP_ISSUER}";
+    client_id "${NGINX_IDP_CLIENT_ID}";
+    client_secret "${NGINX_IDP_CLIENT_SECRET}";
     session_store memory_store;
-    redirect_uri "${NGINX_GOOGLE_REDIRECT_URI}";
+    redirect_uri "${NGINX_IDP_REDIRECT_URI}";
     scopes openid email profile;
     userinfo on;
     logout_uri "/logout";
-    post_logout_uri "${NGINX_GOOGLE_POST_LOGOUT}";
+    post_logout_uri "${NGINX_IDP_POST_LOGOUT}";
 }
 
 server {
-    server_name ${NGINX_GOOGLE_SERVER_NAME};
-    listen ${NGINX_GOOGLE_LISTEN_PORT};
+    server_name ${NGINX_IDP_SERVER_NAME};
+    listen ${NGINX_IDP_LISTEN_PORT};
 
-    auth_oidc google;
+    auth_oidc idp;
 
     location / {
         proxy_pass http://app;
@@ -175,9 +175,10 @@ server {
 }
 EOS
 
-ENV NGINX_GOOGLE_CLIENT_ID= \
-    NGINX_GOOGLE_CLIENT_SECRET= \
-    NGINX_GOOGLE_REDIRECT_URI= \
-    NGINX_GOOGLE_POST_LOGOUT=/public \
-    NGINX_GOOGLE_SERVER_NAME=localhost \
-    NGINX_GOOGLE_LISTEN_PORT=80
+ENV NGINX_IDP_ISSUER= \
+    NGINX_IDP_CLIENT_ID= \
+    NGINX_IDP_CLIENT_SECRET= \
+    NGINX_IDP_REDIRECT_URI= \
+    NGINX_IDP_POST_LOGOUT=/public \
+    NGINX_IDP_SERVER_NAME=localhost \
+    NGINX_IDP_LISTEN_PORT=80
