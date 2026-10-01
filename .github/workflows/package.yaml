@@ -3,7 +3,7 @@ name: package
 on:
   workflow_dispatch:
     inputs:
-      google:
+      example:
         required: false
         type: boolean
         default: false
@@ -44,16 +44,16 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
-      - if: ${{ inputs.google }}
-        name: Build and push for Google example
+      - if: ${{ inputs.example }}
+        name: Build and push for Example
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.10.0
         with:
           context: .
           platforms: linux/${{ matrix.arch }}
           provenance: false
           push: true
-          tags: ghcr.io/${{ env.container }}:google-${{ matrix.arch }}
-          target: google
+          tags: ghcr.io/${{ env.container }}:example-${{ matrix.arch }}
+          target: example
       - name: Build and push
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.10.0
         with:
@@ -87,8 +87,8 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
-      - if: ${{ inputs.google }}
-        name: Build and push for Google example
+      - if: ${{ inputs.example }}
+        name: Build and push for Example
         run: |
           docker buildx imagetools create \
             -t "${CONTAINER}:${TAG}" \
@@ -96,7 +96,7 @@ jobs:
             "${CONTAINER}:${TAG}-arm64"
         env:
           CONTAINER: ghcr.io/${{ env.container }}
-          TAG: google
+          TAG: example
       - name: Build and push
         run: |
           docker buildx imagetools create \
