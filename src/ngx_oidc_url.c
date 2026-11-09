@@ -339,3 +339,104 @@ ngx_oidc_url_validate(ngx_http_request_t *r, ngx_str_t *url)
 
     return NGX_OK;
 }
+
+typedef struct {
+    ngx_str_t   host;
+    ngx_uint_t  https;
+    ngx_int_t   port;
+} url_origin_t;
+
+static ngx_int_t
+url_parse_origin(ngx_str_t *url, url_origin_t *o)
+{
+    u_char *p, *last, *end, *colon;
+    size_t i;
+
+    p = url->data;
+    last = url->data + url->len;
+
+    if (url->len > 8 && ngx_strncasecmp(p, (u_char *) "https://", 8) == 0) {
+        o->https = 1;
+        p += 8;
+    } else if (url->len > 7
+               && ngx_strncasecmp(p, (u_char *) "http://", 7) == 0)
+    {
+        o->https = 0;
+        p += 7;
+    } else {
+        return NGX_ERROR;
+    }
+
+    for (end = p; end < last; end++) {
+        if (*end == '/' || *end == '?' || *end == '#') {
+            break;
+        }
+        if (*end == '@' || *end == '\\') {
+            return NGX_ERROR;
+        }
+    }
+
+    if (end == p) {
+        return NGX_ERROR;
+    }
+
+    colon = NULL;
+    if (*p == '[') {
+        for (i = 0; p + i < end; i++) {
+            if (p[i] == ']') {
+                if (p + i + 1 < end) {
+                    if (p[i + 1] != ':') {
+                        return NGX_ERROR;
+                    }
+                    colon = p + i + 1;
+                }
+                break;
+            }
+        }
+        if (p + i >= end) {
+            return NGX_ERROR;
+        }
+    } else {
+        colon = ngx_strlchr(p, end, ':');
+    }
+
+    o->host.data = p;
+    o->host.len = (colon ? colon : end) - p;
+    o->port = o->https ? 443 : 80;
+
+    if (colon != NULL) {
+        if (colon + 1 < end) {
+            o->port = ngx_atoi(colon + 1, end - colon - 1);
+            if (o->port < 1 || o->port > 65535) {
+                return NGX_ERROR;
+            }
+        }
+    }
+
+    return o->host.len > 0 ? NGX_OK : NGX_ERROR;
+}
+
+ngx_int_t
+ngx_oidc_url_same_origin(ngx_str_t *a, ngx_str_t *b)
+{
+    url_origin_t oa, ob;
+
+    if (a == NULL || b == NULL) {
+        return NGX_DECLINED;
+    }
+
+    if (url_parse_origin(a, &oa) != NGX_OK
+        || url_parse_origin(b, &ob) != NGX_OK)
+    {
+        return NGX_DECLINED;
+    }
+
+    if (oa.https != ob.https || oa.port != ob.port
+        || oa.host.len != ob.host.len
+        || ngx_strncasecmp(oa.host.data, ob.host.data, oa.host.len) != 0)
+    {
+        return NGX_DECLINED;
+    }
+
+    return NGX_OK;
+}

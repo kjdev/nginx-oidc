@@ -64,13 +64,15 @@ void ngx_oidc_metadata_clear_fetch_flag(ngx_http_request_t *r,
  * @param[in] r              HTTP request context
  * @param[in] issuer         OIDC issuer identifier
  * @param[in] discovery_url  Discovery endpoint URL
+ * @param[in] bearer_token   Bearer token for the request (NULL or empty: none)
  * @param[in] callback       Completion callback
  * @param[in] data           User data passed to callback
  *
  * @return NGX_OK on success, NGX_ERROR on failure
  */
 ngx_int_t ngx_oidc_metadata_fetch(ngx_http_request_t *r, ngx_str_t *issuer,
-    ngx_str_t *discovery_url, ngx_oidc_metadata_done_pt callback, void *data);
+    ngx_str_t *discovery_url, ngx_str_t *bearer_token,
+    ngx_oidc_metadata_done_pt callback, void *data);
 
 /**
  * Initialize metadata shared memory zone

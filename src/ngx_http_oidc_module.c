@@ -14,6 +14,7 @@
 #include "ngx_oidc_session.h"
 #include "ngx_oidc_session_store.h"
 #include "ngx_oidc_jwks.h"
+#include "ngx_oidc_token_file.h"
 #include "ngx_oidc_metadata.h"
 #include "ngx_oidc_provider.h"
 #include "ngx_oidc_handler_authenticate.h"
@@ -74,6 +75,8 @@ static char *ngx_http_oidc_session_store_command(ngx_conf_t *cf,
 static char *ngx_http_oidc_scopes(ngx_conf_t *cf, ngx_command_t *cmd,
     void *conf);
 static char *ngx_http_oidc_auth(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
+static char *ngx_http_oidc_set_bearer_token_file(ngx_conf_t *cf,
+    ngx_command_t *cmd, void *conf);
 static char *ngx_http_oidc_set_userinfo(ngx_conf_t *cf, ngx_command_t *cmd,
     void *conf);
 static char *ngx_http_oidc_set_mode(ngx_conf_t *cf, ngx_command_t *cmd,
@@ -271,6 +274,8 @@ static ngx_command_t ngx_http_oidc_commands[] = {
       ngx_offsetof_nested(ngx_http_oidc_provider_t, logout, token_hint), NULL },
     { ngx_string("userinfo"), NGX_HTTP_MAIN_CONF | NGX_CONF_TAKE1,
       ngx_http_oidc_set_userinfo, 0, 0, NULL },
+    { ngx_string("bearer_token_file"), NGX_HTTP_MAIN_CONF | NGX_CONF_1MORE,
+      ngx_http_oidc_set_bearer_token_file, 0, 0, NULL },
     /* module */
     { ngx_string("auth_oidc"),
       NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
@@ -671,11 +676,50 @@ access_metadata_done(ngx_http_request_t *r,
     return NGX_OK;
 }
 
+/*
+ * Load the Bearer token for a Discovery/JWKS fetch.
+ *
+ * token->len stays 0 when bearer_token_file is not configured for the target.
+ * The token is only sent to the origin of issuer or config_url, because the
+ * JWKS URI comes from the (remote) metadata document.
+ */
+static ngx_int_t
+access_load_bearer_token(ngx_http_request_t *r,
+    ngx_http_oidc_provider_t *provider, ngx_uint_t target, ngx_str_t *url,
+    ngx_str_t *issuer_url, ngx_str_t *token)
+{
+    ngx_str_t config_url;
+
+    ngx_str_null(token);
+
+    if (provider->bearer_token_file.len == 0
+        || (provider->bearer_token_targets & target) == 0)
+    {
+        return NGX_OK;
+    }
+
+    if (ngx_oidc_url_same_origin(url, issuer_url) != NGX_OK) {
+        if (provider->config_url == NULL
+            || ngx_http_complex_value(r, provider->config_url, &config_url)
+            != NGX_OK
+            || ngx_oidc_url_same_origin(url, &config_url) != NGX_OK)
+        {
+            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                          "oidc_module: refusing to send bearer token to "
+                          "\"%V\": origin differs from issuer/config_url "
+                          "of provider %V", url, &provider->name);
+            return NGX_ERROR;
+        }
+    }
+
+    return ngx_oidc_token_file_read(r, &provider->bearer_token_file, token);
+}
+
 static ngx_int_t
 access_fetch_metadata(ngx_http_request_t *r, ngx_http_oidc_provider_t *provider,
     ngx_str_t *issuer_url)
 {
-    ngx_str_t config_url;
+    ngx_str_t config_url, token;
     metadata_ctx_t *ctx;
 
     /* Create context for metadata subrequest */
@@ -724,7 +768,15 @@ access_fetch_metadata(ngx_http_request_t *r, ngx_http_oidc_provider_t *provider,
                    &config_url);
 
     /* Use Metadata Module API */
-    return ngx_oidc_metadata_fetch(r, issuer_url, &config_url,
+    if (access_load_bearer_token(r, provider,
+                                 NGX_OIDC_BEARER_TARGET_DISCOVERY,
+                                 &config_url, issuer_url, &token)
+        != NGX_OK)
+    {
+        return NGX_ERROR;
+    }
+
+    return ngx_oidc_metadata_fetch(r, issuer_url, &config_url, &token,
                                    access_metadata_done, ctx);
 }
 
@@ -859,7 +911,7 @@ access_jwks_done(ngx_http_request_t *r, ngx_oidc_jwks_cache_node_t *jwks,
 static ngx_int_t
 access_fetch_jwks(ngx_http_request_t *r, ngx_http_oidc_provider_t *provider)
 {
-    ngx_str_t issuer;
+    ngx_str_t issuer, token;
     metadata_ctx_t *ctx;
     ngx_oidc_metadata_cache_t *metadata;
     ngx_int_t rc;
@@ -903,7 +955,14 @@ access_fetch_jwks(ngx_http_request_t *r, ngx_http_oidc_provider_t *provider)
                    jwks_uri);
 
     /* Use JWKS Module API */
-    return ngx_oidc_jwks_fetch(r, jwks_uri, access_jwks_done, ctx);
+    if (access_load_bearer_token(r, provider, NGX_OIDC_BEARER_TARGET_JWKS,
+                                 jwks_uri, &issuer, &token)
+        != NGX_OK)
+    {
+        return NGX_ERROR;
+    }
+
+    return ngx_oidc_jwks_fetch(r, jwks_uri, &token, access_jwks_done, ctx);
 }
 
 /* Noop content handler to prevent further processing */
@@ -2649,6 +2708,56 @@ ngx_http_oidc_auth(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
     if (ngx_http_compile_complex_value(&ccv) != NGX_OK) {
         return NGX_CONF_ERROR;
     }
+
+    return NGX_CONF_OK;
+}
+
+static char *
+ngx_http_oidc_set_bearer_token_file(ngx_conf_t *cf, ngx_command_t *cmd,
+    void *conf)
+{
+    ngx_http_oidc_provider_t *provider = conf;
+    ngx_str_t *value;
+    ngx_uint_t i;
+
+    value = cf->args->elts;
+
+    /* NGX_CONF_1MORE is not enforced when dispatched via cf->handler */
+    if (cf->args->nelts < 2) {
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                           "invalid number of arguments "
+                           "in \"bearer_token_file\" directive");
+        return NGX_CONF_ERROR;
+    }
+
+    if (provider->bearer_token_file.len != 0) {
+        return "is duplicate";
+    }
+
+    for (i = 2; i < cf->args->nelts; i++) {
+        if (ngx_strcmp(value[i].data, "discovery") == 0) {
+            provider->bearer_token_targets |= NGX_OIDC_BEARER_TARGET_DISCOVERY;
+        } else if (ngx_strcmp(value[i].data, "jwks") == 0) {
+            provider->bearer_token_targets |= NGX_OIDC_BEARER_TARGET_JWKS;
+        } else {
+            ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                               "invalid target \"%V\" in "
+                               "\"bearer_token_file\" directive, must be "
+                               "\"discovery\" or \"jwks\"", &value[i]);
+            return NGX_CONF_ERROR;
+        }
+    }
+
+    if (provider->bearer_token_targets == 0) {
+        provider->bearer_token_targets = NGX_OIDC_BEARER_TARGET_DISCOVERY
+                                         | NGX_OIDC_BEARER_TARGET_JWKS;
+    }
+
+    if (ngx_conf_full_name(cf->cycle, &value[1], 1) != NGX_OK) {
+        return NGX_CONF_ERROR;
+    }
+
+    provider->bearer_token_file = value[1];
 
     return NGX_CONF_OK;
 }

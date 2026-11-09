@@ -76,15 +76,16 @@ void ngx_oidc_jwks_clear_fetch_flag(ngx_http_request_t *r,
 /**
  * Fetch JWKS via subrequest (async)
  *
- * @param[in] r         HTTP request context
- * @param[in] jwks_uri  JWKS endpoint URI
- * @param[in] callback  Completion callback
- * @param[in] data      User data passed to callback
+ * @param[in] r             HTTP request context
+ * @param[in] jwks_uri      JWKS endpoint URI
+ * @param[in] bearer_token  Bearer token for the request (NULL or empty: none)
+ * @param[in] callback      Completion callback
+ * @param[in] data          User data passed to callback
  *
  * @return NGX_OK on success, NGX_ERROR on failure
  */
 ngx_int_t ngx_oidc_jwks_fetch(ngx_http_request_t *r, ngx_str_t *jwks_uri,
-    ngx_oidc_jwks_done_pt callback, void *data);
+    ngx_str_t *bearer_token, ngx_oidc_jwks_done_pt callback, void *data);
 
 /**
  * JWKS cache iteration callback

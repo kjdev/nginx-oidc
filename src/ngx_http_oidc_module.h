@@ -34,6 +34,10 @@ typedef enum {
     NGX_OIDC_USERINFO_LOCATION
 } ngx_oidc_userinfo_mode_t;
 
+/** Targets of bearer_token_file (bit flags) */
+#define NGX_OIDC_BEARER_TARGET_DISCOVERY  0x01
+#define NGX_OIDC_BEARER_TARGET_JWKS       0x02
+
 /** OIDC provider configuration */
 typedef struct {
     /** provider name */
@@ -99,6 +103,10 @@ typedef struct {
     ngx_uint_t                userinfo_mode;
     /** userinfo location (for NGX_OIDC_USERINFO_LOCATION mode) */
     ngx_str_t                 userinfo_location;
+    /** Bearer token file for Discovery/JWKS fetch (empty: disabled) */
+    ngx_str_t                 bearer_token_file;
+    /** NGX_OIDC_BEARER_TARGET_* flags */
+    ngx_uint_t                bearer_token_targets;
 } ngx_http_oidc_provider_t;
 
 /** OIDC module main configuration (http block level) */

@@ -904,7 +904,7 @@ ngx_oidc_jwks_get_key_count(const ngx_oidc_jwks_cache_node_t *jwks)
 
 ngx_int_t
 ngx_oidc_jwks_fetch(ngx_http_request_t *r, ngx_str_t *jwks_uri,
-    ngx_oidc_jwks_done_pt callback, void *data)
+    ngx_str_t *bearer_token, ngx_oidc_jwks_done_pt callback, void *data)
 {
     jwks_fetch_ctx_t *ctx;
 
@@ -927,6 +927,11 @@ ngx_oidc_jwks_fetch(ngx_http_request_t *r, ngx_str_t *jwks_uri,
     /* Create external URL fetch using Week 2 HTTP module */
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                    "oidc_jwks: creating GET request for JWKS endpoint");
+
+    if (bearer_token != NULL && bearer_token->len > 0) {
+        return ngx_oidc_http_get_bearer(r, jwks_uri, bearer_token,
+                                        jwks_subrequest_done, ctx);
+    }
 
     return ngx_oidc_http_get(r, jwks_uri, jwks_subrequest_done, ctx);
 }

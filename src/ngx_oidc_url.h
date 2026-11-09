@@ -47,4 +47,17 @@ ngx_int_t ngx_oidc_url_build_absolute(ngx_http_request_t *r, ngx_str_t *path,
  */
 ngx_int_t ngx_oidc_url_validate(ngx_http_request_t *r, ngx_str_t *url);
 
+/**
+ * Compare the origins (scheme, host, port) of two absolute URLs
+ *
+ * Only http/https URLs without userinfo are comparable. Scheme and host are
+ * compared case-insensitively and the default port is applied when omitted.
+ *
+ * @param[in] a  First URL
+ * @param[in] b  Second URL
+ *
+ * @return NGX_OK if both share the same origin, NGX_DECLINED otherwise
+ */
+ngx_int_t ngx_oidc_url_same_origin(ngx_str_t *a, ngx_str_t *b);
+
 #endif /* _NGX_OIDC_URL_H_INCLUDED_ */

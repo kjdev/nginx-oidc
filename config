@@ -66,6 +66,7 @@ ngx_module_srcs="\
   $ngx_addon_dir/src/ngx_oidc_session_store.c \
   $ngx_addon_dir/src/ngx_oidc_session_store_memory.c \
   $ngx_addon_dir/src/ngx_oidc_session_store_redis.c \
+  $ngx_addon_dir/src/ngx_oidc_token_file.c \
   $ngx_addon_dir/src/ngx_oidc_url.c \
   $ngx_addon_dir/src/ngx_oidc_variable.c \
 "

@@ -765,7 +765,8 @@ ngx_oidc_metadata_get(ngx_http_request_t *r, ngx_str_t *issuer,
 
 ngx_int_t
 ngx_oidc_metadata_fetch(ngx_http_request_t *r, ngx_str_t *issuer,
-    ngx_str_t *discovery_url, ngx_oidc_metadata_done_pt callback, void *data)
+    ngx_str_t *discovery_url, ngx_str_t *bearer_token,
+    ngx_oidc_metadata_done_pt callback, void *data)
 {
     metadata_fetch_ctx_t *ctx;
 
@@ -801,6 +802,11 @@ ngx_oidc_metadata_fetch(ngx_http_request_t *r, ngx_str_t *issuer,
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                    "oidc_metadata: creating GET request "
                    "for discovery endpoint");
+
+    if (bearer_token != NULL && bearer_token->len > 0) {
+        return ngx_oidc_http_get_bearer(r, discovery_url, bearer_token,
+                                        metadata_subrequest_done, ctx);
+    }
 
     return ngx_oidc_http_get(r, discovery_url, metadata_subrequest_done, ctx);
 }
