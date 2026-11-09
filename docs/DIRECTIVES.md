@@ -281,6 +281,31 @@ Default: {issuer}/.well-known/openid-configuration
 
 The OpenID Connect Discovery endpoint URL. No configuration is needed if using the standard Discovery endpoint.
 
+#### bearer_token_file
+
+```
+Syntax:  bearer_token_file <path> [discovery] [jwks];
+Default: -
+```
+
+Specifies a token file whose contents are sent as `Authorization: Bearer <token>` when fetching Discovery metadata and the JWKS.
+This is intended for endpoints that require authentication, such as the Kubernetes API server with `--anonymous-auth=false`, using a rotating token (e.g., a projected ServiceAccount token).
+
+- Select the targets with `discovery` / `jwks`. When omitted, both are targeted
+- The file is read on every fetch, so a rotated token is used without a reload
+- Leading and trailing whitespace is trimmed. The fetch fails if the file is missing, empty, larger than 16 KB, or contains whitespace or control characters
+- The token is only sent to URLs with the same origin (scheme, host, port) as `issuer` or `config_url`. Because the JWKS URI comes from the Discovery response, the fetch fails without sending the token when it points to another origin
+- The token is sent as-is even when `issuer` or `config_url` uses `http://`, and no warning is logged. Over plain HTTP the token can be intercepted on the network, so use `https://` for endpoints that receive the token
+- The token is sent through `proxy_set_header Authorization $oidc_fetch_bearer;` in the internal fetch location
+
+```nginx
+oidc_provider k8s {
+    issuer "https://kubernetes.default.svc";
+    bearer_token_file /var/run/secrets/kubernetes.io/serviceaccount/token jwks;
+    ...
+}
+```
+
 #### cookie_name
 
 ```
@@ -1089,7 +1114,7 @@ The Content-Length header value for subrequests (explicitly set to `0` for GET r
 
 #### $oidc_fetch_bearer
 
-The Authorization header value in `"Bearer <token>"` format (set when accessing the UserInfo endpoint). Specify directly in `proxy_set_header Authorization` (empty string when no value is present).
+The Authorization header value in `"Bearer <token>"` format (set when accessing the UserInfo endpoint, and for Discovery/JWKS fetches when `bearer_token_file` applies). Specify directly in `proxy_set_header Authorization` (empty string when no value is present).
 
 ### Usage Examples
 
