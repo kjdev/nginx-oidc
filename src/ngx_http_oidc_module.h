@@ -202,6 +202,8 @@ typedef struct {
         /** decoded access token payload; non-NULL means verified */
         nxe_json_t *payload;
     } bearer;
+    /** Discovery/JWKS fetch subrequest failed; respond with 502 */
+    unsigned  fetch_failed:1;
     /** HTTP fetch subrequest parameters */
     struct {
         /** target URL */

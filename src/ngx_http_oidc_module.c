@@ -641,6 +641,23 @@ access_determine_request_type_late(ngx_http_request_t *r,
 }
 
 /*
+ * Returning NGX_ERROR from a post_subrequest handler makes nginx terminate
+ * the main request and close the connection without a response.
+ * Record the failure instead, so the access handler (re-entered when the
+ * subrequest completes) can answer 502.
+ */
+static void
+access_mark_fetch_failed(ngx_http_request_t *main_r)
+{
+    ngx_http_oidc_ctx_t *octx;
+
+    octx = ngx_http_get_module_ctx(main_r, ngx_http_oidc_module);
+    if (octx != NULL) {
+        octx->fetch_failed = 1;
+    }
+}
+
+/*
  * Metadata Module callback wrapper
  * Bridges Metadata API with existing Legacy infrastructure
  */
@@ -665,7 +682,8 @@ access_metadata_done(ngx_http_request_t *r,
         ngx_log_error(NGX_LOG_ERR, main_r->connection->log, 0,
                       "oidc_module: metadata fetch failed for provider %V",
                       &ctx->provider->name);
-        return NGX_ERROR;
+        access_mark_fetch_failed(main_r);
+        return NGX_OK;
     }
 
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, main_r->connection->log, 0,
@@ -898,7 +916,8 @@ access_jwks_done(ngx_http_request_t *r, ngx_oidc_jwks_cache_node_t *jwks,
         ngx_log_error(NGX_LOG_ERR, main_r->connection->log, 0,
                       "oidc_module: JWKS fetch failed for provider %V",
                       &provider->name);
-        return NGX_ERROR;
+        access_mark_fetch_failed(main_r);
+        return NGX_OK;
     }
 
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, main_r->connection->log, 0,
@@ -1076,6 +1095,11 @@ ngx_http_oidc_access_handler(ngx_http_request_t *r)
     /* Complete request type determination (needs provider info) */
     if (ctx->request_type == NGX_HTTP_OIDC_REQUEST_TYPE_UNKNOWN) {
         access_determine_request_type_late(r, ctx, provider, olcf);
+    }
+
+    /* A failed Discovery/JWKS fetch must not be retried by re-entry */
+    if (ctx->fetch_failed) {
+        return NGX_HTTP_BAD_GATEWAY;
     }
 
     /* Fetch provider metadata (only once per request) */
