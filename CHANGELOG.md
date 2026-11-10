@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - `bearer_token_file <path> [discovery] [jwks]` directive in `oidc_provider`: send a bearer token read from a file as the `Authorization` header when fetching the Discovery document and/or the JWKS (both targets if none is specified). Supports identity providers that require authenticated metadata/JWKS requests, such as Kubernetes with `--anonymous-auth=false` and a projected ServiceAccount token. The file is read on every fetch, so rotated tokens are picked up without a reload. The token is sent only to URLs with the same origin (scheme, host, and port) as `issuer` or `config_url`; otherwise the fetch fails. An unreadable, empty, or oversized file also fails the fetch rather than sending the request without a token
 
+### Fixed
+
+- A failed Discovery or JWKS fetch (e.g. a non-200 response from the provider) no longer closes the client connection without a response. The request now receives a `502 Bad Gateway`
+
 ## [0.8.0] - 2026-09-10
 
 ### Security
