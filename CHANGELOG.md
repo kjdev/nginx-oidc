@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - A failed Discovery or JWKS fetch (e.g. a non-200 response from the provider) no longer closes the client connection without a response. The request now receives a `502 Bad Gateway`
 
+### Dependencies
+
+- Bump `nxe-jwx` `0.3.0` → `0.4.0`: add `nxe_jwx_jwks_verify_raw_by_kid()` for detached signature verification keyed by raw JWK `kid`, and try every key sharing a duplicate `kid` instead of only the first match
+
 ## [0.8.0] - 2026-09-10
 
 ### Security
