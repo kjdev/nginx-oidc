@@ -490,6 +490,21 @@ ngx_oidc_variable_claim(ngx_http_request_t *r, ngx_http_variable_value_t *v,
             v->no_cacheable = 0;
             v->not_found = 0;
         }
+    } else if (nxe_json_is_object(claim_value)) {
+        /* Same compact-JSON form that array elements use for nested
+         * objects, so the representation is consistent. */
+        ngx_str_t *obj_repr;
+
+        obj_repr = nxe_json_stringify_compact(claim_value, r->pool);
+        if (obj_repr == NULL) {
+            v->not_found = 1;
+        } else {
+            v->len = obj_repr->len;
+            v->data = obj_repr->data;
+            v->valid = 1;
+            v->no_cacheable = 0;
+            v->not_found = 0;
+        }
     } else {
         v->not_found = 1;
     }
