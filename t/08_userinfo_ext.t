@@ -200,3 +200,48 @@ id-token:.+
 access-token:.+
 userinfo:
 user id is user-identifier
+
+=== userinfo-ext: object claim is rendered as compact JSON
+--- http_config
+    lua_package_path "$TEST_NGINX_LUA_DIR/?.lua;$TEST_NGINX_CONF_DIR/../lib/?.lua;;";
+    include $TEST_NGINX_CONF_DIR/test-provider-userinfo-ext.conf;
+    include $TEST_NGINX_CONF_DIR/server-app.conf;
+    include $TEST_NGINX_CONF_DIR/stub-idp.conf;
+--- config
+    include $TEST_NGINX_CONF_DIR/location-fetch.conf;
+    auth_oidc test_userinfo_ext_provider;
+
+    location / {
+        proxy_pass http://app;
+        proxy_set_header X-Authenticated $oidc_authenticated;
+        proxy_set_header X-User-ID $oidc_claim_sub;
+        proxy_set_header X-User-Roles $oidc_claim_profile;
+        proxy_set_header X-User-Special-Roles $oidc_claim_empty_profile;
+    }
+
+    location = /_custom_userinfo {
+        internal;
+        auth_oidc off;
+        default_type application/json;
+        return 200 '{"profile":{"a":1,"b":["x"]},"empty_profile":{}}';
+    }
+
+    location = /test-object-claim {
+        auth_oidc off;
+        content_by_lua_block {
+            local oidc = require "oidc_test"
+            local httpc = require("resty.http").new()
+            local res = oidc.full_flow(httpc)
+            ngx.status = res and res.status or 500
+            ngx.print(res and res.body or "")
+        }
+    }
+--- request
+GET /test-object-claim
+--- error_code: 200
+--- response_body_like
+user id is user-identifier
+user email is 
+user algorithm is 
+user roles are \{"a":1,"b":\["x"\]\}
+user special roles are \{\}
