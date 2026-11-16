@@ -122,6 +122,12 @@ EOS
 # [Example]
 FROM module AS example
 
+COPY --chmod=644 <<'EOS' /etc/nginx/oidc_app_location.conf
+location / {
+    return 200 "authenticate\nid-token:$http_x_id_token\naccess-token:$http_x_access_token\nuserinfo:$http_x_userinfo\nuser id is $http_x_user_id\nuser email is $http_x_user_email\n";
+}
+EOS
+
 COPY --chmod=644 <<'EOS' /etc/nginx/templates/default.conf.template
 upstream app {
     zone app 64k;
@@ -132,9 +138,7 @@ server {
     listen 8081;
     default_type text/plain;
     charset utf-8;
-    location / {
-        return 200 "authenticate\nid-token:$http_x_id_token\naccess-token:$http_x_access_token\nuserinfo:$http_x_userinfo\nuser id is $http_x_user_id\nuser email is $http_x_user_email\n";
-    }
+    include /etc/nginx/oidc_app_location.conf;
 }
 
 oidc_session_store memory_store {
