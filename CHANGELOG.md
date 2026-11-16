@@ -5,6 +5,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-16
+
 ### Added
 
 - Object-typed claims rendered as compact-JSON `$oidc_claim_*` values (e.g. `{"a":1,"b":["x"]}`), the same form used for object elements inside array claims
