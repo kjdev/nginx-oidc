@@ -133,7 +133,7 @@ server {
     default_type text/plain;
     charset utf-8;
     location / {
-        return 200 "authenticate\nid-token:$http_x_id_token\naccess-token:$http_x_access_token\nuserinfo:$http_x_userinfo\nuser id is $http_x_user_id\nuser email is $http_x_user_email\nuser picture is $http_x_user_picture\n";
+        return 200 "authenticate\nid-token:$http_x_id_token\naccess-token:$http_x_access_token\nuserinfo:$http_x_userinfo\nuser id is $http_x_user_id\nuser email is $http_x_user_email\n";
     }
 }
 
@@ -150,9 +150,10 @@ oidc_provider idp {
     session_store memory_store;
     redirect_uri "${NGINX_IDP_REDIRECT_URI}";
     scopes openid email profile;
-    userinfo on;
+    userinfo ${NGINX_IDP_USERINFO};
     logout_uri "/logout";
     post_logout_uri "${NGINX_IDP_POST_LOGOUT}";
+    logout_token_hint ${NGINX_IDP_LOGOUT_TOKEN_HINT};
 }
 
 server {
@@ -168,7 +169,7 @@ server {
         proxy_set_header X-UserInfo $oidc_userinfo;
         proxy_set_header X-User-ID $oidc_claim_sub;
         proxy_set_header X-User-Email $oidc_claim_email;
-        proxy_set_header X-User-Picture $oidc_claim_picture;
+        ${NGINX_IDP_PROXY_HEADERS}
     }
 
     include /etc/nginx/oidc_http_fetch.conf;
@@ -199,4 +200,7 @@ ENV NGINX_IDP_ISSUER= \
     NGINX_IDP_REDIRECT_URI= \
     NGINX_IDP_POST_LOGOUT=/public \
     NGINX_IDP_SERVER_NAME=localhost \
-    NGINX_IDP_LISTEN_PORT=80
+    NGINX_IDP_LISTEN_PORT=80 \
+    NGINX_IDP_USERINFO=on \
+    NGINX_IDP_LOGOUT_TOKEN_HINT=off \
+    NGINX_IDP_PROXY_HEADERS=
