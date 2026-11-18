@@ -81,6 +81,7 @@ location /_oidc_http_fetch {
 
     proxy_set_header Host $proxy_host;
     proxy_set_header Accept-Encoding "";
+    proxy_set_header User-Agent "${NGINX_OIDC_USER_AGENT}";
     proxy_pass_request_body on;
     proxy_max_temp_file_size 0;
 
@@ -112,10 +113,13 @@ fi
 if [ -z "$(printf '%s' "${NGINX_OIDC_RESOLVER:-}" | tr -d '[:space:]')" ]; then
     NGINX_OIDC_RESOLVER='8.8.8.8 valid=300s'
 fi
-export NGINX_OIDC_RESOLVER
+if [ -z "$(printf '%s' "${NGINX_OIDC_USER_AGENT:-}" | tr -d '[:space:]')" ]; then
+    NGINX_OIDC_USER_AGENT='nginx-oidc'
+fi
+export NGINX_OIDC_RESOLVER NGINX_OIDC_USER_AGENT
 {
     echo "${marker}"
-    envsubst '${NGINX_OIDC_RESOLVER}' < "${out}.template"
+    envsubst '${NGINX_OIDC_RESOLVER} ${NGINX_OIDC_USER_AGENT}' < "${out}.template"
 } > "${out}"
 EOS
 
