@@ -132,8 +132,8 @@ jobs:
       - if: ${{ matrix.nginx.version != 'ubuntu' && matrix.nginx.version != 'alpine' }}
         name: Build with sources
         run: |
-          # Download Lua module: 0.10.26
-          curl -sL -o nginx-mod-lua.tar.gz https://github.com/openresty/lua-nginx-module/archive/refs/tags/v0.10.26.tar.gz
+          # Download Lua module: 0.10.29
+          curl -sL -o nginx-mod-lua.tar.gz https://github.com/openresty/lua-nginx-module/archive/refs/tags/v0.10.29.tar.gz
           tar xf nginx-mod-lua.tar.gz
           # Download NDK module
           curl -sL -o nginx-mod-ndk.tar.gz https://github.com/dvershinin/ngx_devel_kit/archive/refs/tags/v0.3.5.tar.gz
@@ -150,7 +150,7 @@ jobs:
             --with-http_v2_module \
             --with-pcre \
             --with-pcre-jit \
-            --add-dynamic-module=../lua-nginx-module-0.10.26 \
+            --add-dynamic-module=../lua-nginx-module-0.10.29 \
             --add-dynamic-module=../ngx_devel_kit-0.3.5 \
             --add-dynamic-module=..
           make -j
