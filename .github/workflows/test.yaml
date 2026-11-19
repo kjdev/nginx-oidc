@@ -23,7 +23,7 @@ jobs:
       contents: read
       packages: read
     name: test (${{ matrix.nginx.label }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - if: ${{ matrix.nginx.version != 'alpine' }}
         name: Set up step
@@ -45,7 +45,7 @@ jobs:
             redis
           if [ ! "${nginx_version}" = "ubuntu" ]; then
             sudo apt-get install -y --no-install-recommends \
-              libluajit2-5.1-dev
+              libluajit-5.1-dev
           fi
           sudo luarocks install lua-resty-http
           sudo luarocks install lua-resty-string
