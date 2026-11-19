@@ -208,9 +208,9 @@ jobs:
             label: 'alpine'
           - version: 'ubuntu'
             label: 'ubuntu'
-          - version: '1.30.6'
+          - version: '1.30.7'
             label: 'stable'
-          - version: '1.31.8'
+          - version: '1.31.9'
             label: 'mainline'
     container:
       image: ${{ matrix.nginx.version == 'alpine' && 'alpine:latest' || null }}
